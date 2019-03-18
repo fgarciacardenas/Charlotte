@@ -3,6 +3,7 @@
 #include <cmath>
 #include <iostream>
 #include <Eigen/Dense>
+#include <qpOASES.hpp>
 using namespace Eigen;
 using namespace std;
 
@@ -11,6 +12,12 @@ struct Cost_values
 {
 	MatrixXd h;
 	VectorXd f;
+};
+
+struct QP_values
+{
+	MatrixXd qf;
+	int i;
 };
 
 // Declare functions
@@ -26,6 +33,8 @@ MatrixXd com_pos(VectorXd q);
 VectorXd com_kinematics(Vector3d q, int leg, Vector3d posb, Vector3d rotb, Vector4d w);
 Matrix3d com_jacobian(VectorXd q, Vector3d posb, Vector3d rotb);
 Vector3d rot2q(Matrix4d rotm);
+QP_values quad_prog(VectorXd q, VectorXd xd, int max_iter, double d_t, int lamb, VectorXi w, double tol, Vector3d com_xd);
+void QP_oases();
 
 // Constants
 const double pi = M_PI;
@@ -66,7 +75,8 @@ int main()
 	// Weights: [posb, leg1, leg2, leg3, leg4, rotb]
 	VectorXi w = VectorXi::Ones(7);
 	// Quadratic program
-	//[qf, i] = quad_prog(q, xd, max_iter, d_t, lamb, w, tol, com_xd, 1);
+	QP_values qp = quad_prog(q, xd, max_iter, d_t, lamb, w, tol, com_xd);
+	QP_oases();
 	// Compare desired and current positions(x, y, z)
 	//compare(qf, xd, i);
 	// Find the center of mass
@@ -246,7 +256,53 @@ Matrix3d jacobian_kinematics(Vector3d q, Vector3d rotb, int leg) {
 }
 
 
-VectorXd quad_prog(VectorXd q, VectorXd xd, int max_iter, double d_t, int lamb, VectorXd w, double tol, Vector3d com_xd) {
+void QP_oases() {
+	USING_NAMESPACE_QPOASES
+
+	/* Setup data of first QP. */
+	real_t H[2 * 2] = { 1.0, 0.0, 0.0, 0.5 };
+	real_t g[2] = { 1.5, 1.0 };
+	real_t lb[2] = { 0.5, -2.0 };
+	real_t ub[2] = { 5.0, 2.0 };
+
+	/* Setup data of second QP. */
+	real_t g_new[2] = { 1.0, 1.5 };
+	real_t lb_new[2] = { 0.0, -1.0 };
+	real_t ub_new[2] = { 5.0, -0.5 };
+
+	cout << endl << "matrix H:" << H << endl;
+	
+	/* Setting up QProblemB object. */
+	QProblemB( 2 );
+
+	/*Options options;
+	//options.enableFlippingBounds = BT_FALSE;
+	options.initialStatusBounds = ST_INACTIVE;
+	options.numRefinementSteps = 1;
+	options.enableCholeskyRefactorisation = 1;
+	qp_quad.setOptions( options );
+
+	/* Solve first QP. */
+	/*int_t nWSR = 10;
+	qp_quad.init( H,g,lb,ub, nWSR,0 );
+
+	/* Get and print solution of first QP. */
+	/*real_t xOpt[2];
+	qp_quad.getPrimalSolution( xOpt );
+	printf( "\nxOpt = [ %e, %e ];  objVal = %e\n\n", xOpt[0],xOpt[1],qp_quad.getObjVal() );
+	
+	/* Solve second QP. */
+	/*nWSR = 10;
+	qp_quad.hotstart( g_new,lb_new,ub_new, nWSR,0 );
+// 	printf( "\nnWSR = %d\n\n", nWSR );
+
+	/* Get and print solution of second QP. */
+	/*qp_quad.getPrimalSolution( xOpt );
+	printf( "\nxOpt = [ %e, %e ];  objVal = %e\n\n", xOpt[0],xOpt[1],qp_quad.getObjVal() );*/
+}
+
+
+QP_values quad_prog(VectorXd q, VectorXd xd, int max_iter, double d_t, int lamb, VectorXi w, double tol, Vector3d com_xd) {
 	// This function manages the minimization program and find the error of the desired function
 	MatrixXd qf(max_iter, 18);
 	int i = 0;
@@ -255,8 +311,10 @@ VectorXd quad_prog(VectorXd q, VectorXd xd, int max_iter, double d_t, int lamb, 
 		// Quadratic programming
 		Cost_values cost = costfunc(q, xd, lamb, w, com_xd);
 		MatrixXd h = (cost.h + cost.h.transpose()) / 2;
-		VectorXd f = cost.f);
-		
+		VectorXd f = cost.f;
+		cout << f;
+
+		/*
 		// Solver configuration
 		solvers.options['show_progress'] = False;
 		solvers.options['maxiters'] = 1000;
@@ -289,11 +347,13 @@ VectorXd quad_prog(VectorXd q, VectorXd xd, int max_iter, double d_t, int lamb, 
 		if (err <= tol) {
 			i++;
 			break
-		}
+		}*/
 		i++;
 	}
+	
+	QP_values result = { qf, i };
 
-	return qf;
+	return result;
 }
 
 
