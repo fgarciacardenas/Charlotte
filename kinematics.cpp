@@ -33,7 +33,7 @@ Matrix3d jacobian_kinematics(Vector3d q, Vector3d rotb, int leg);
 MatrixXd com_pos(VectorXd q);
 VectorXd com_kinematics(Vector3d q, int leg, Vector3d posb, Vector3d rotb, Vector4d w);
 Matrix3d com_jacobian(VectorXd q, Vector3d posb, Vector3d rotb);
-Vector3d rot2q(Matrix4d rotm);
+Vector3d rot2q(Matrix3d rotm);
 QP_values quad_prog(VectorXd q, VectorXd xd, int max_iter, double d_t, int lamb, VectorXi w, double tol, Vector3d com_xd);
 void QP_oases();
 
@@ -55,7 +55,7 @@ int main()
 
 	// Desired position[posb, leg1, leg2, leg3, leg4, rotb]:
 	VectorXd xd(18);
-	xd.segment(0, 3)  << 0, 0, 0;
+	xd.segment(0, 3)  << 1, 0, 0;
 	xd.segment(3, 3)  << 0 + leg1_position(0), 0 + leg1_position(1), 0 + leg1_position(2);
 	xd.segment(6, 3)  << 0 + leg2_position(0), 0 + leg2_position(1), 0 + leg2_position(2);
 	xd.segment(9, 3)  << 0 + leg3_position(0), 0 + leg3_position(1), 0 + leg3_position(2);
@@ -66,7 +66,7 @@ int main()
 	//com_xd = cmass(q);
 	Vector3d com_xd = Vector3d::Zero();
 	// Maximum number of iterations
-	int max_iter = 1;
+	int max_iter = 20;
 	// Time between signals
 	double d_t = 0.01;
 	// Gain of quadratic function
@@ -77,6 +77,7 @@ int main()
 	VectorXi w = VectorXi::Ones(7);
 	// Quadratic program
 	QP_values qp = quad_prog(q, xd, max_iter, d_t, lamb, w, tol, com_xd);
+	cout << endl << qp.qf << endl;
 	// QP_oases();
 	// Compare desired and current positions(x, y, z)
 	//compare(qf, xd, i);
@@ -210,7 +211,7 @@ Matrix3d q2rot(double a, double b, double c) {
 }
 
 
-Vector3d rot2q(Matrix4d rotm) {
+Vector3d rot2q(Matrix3d rotm) {
 	double a, b, c;
 	Vector3d values;
 	a = atan2(rotm(2,1), rotm(2,2));
@@ -376,26 +377,28 @@ QP_values quad_prog(VectorXd q, VectorXd xd, int max_iter, double d_t, int lamb,
 
 		// Update the position vector
 		q.segment(0, 15) = q.segment(0, 15) + d_t * dq.segment(0, 15);
-		
+
 		// Update the orientation vector
 		Matrix3d rot_axis, skw, rgs, rot;
 		rot_axis << cos(q(16)) * cos(q(17)), -sin(q(17)), 0,
 					cos(q(16)) * sin(q(17)),  cos(q(17)), 0,
 				                -sin(q(16)),           0, 1;
-		rot_axis *= dq.segment(15, 3);
 
-		skw <<           0, -rot_axis(2),  rot_axis(1),
-			   rot_axis(2),            0, -rot_axis(0),
-			  -rot_axis(1),  rot_axis(0),            0;
+		Vector3d rot_vec;
+		rot_vec << rot_axis * dq.segment(15, 3);
+		
+		skw <<           0, -rot_vec(2),  rot_vec(1),
+			    rot_vec(2),           0, -rot_vec(0),
+			   -rot_vec(1),  rot_vec(0),           0;
 
 		// Rodrigues rotation formula
-		rgs = Matrix3d::Identity() + sin(d_t) * skw + (1 - cos(d_t)) * pow(skw,2);
+		rgs = Matrix3d::Identity() + sin(d_t) * skw + (1 - cos(d_t)) * (skw*skw);
 		rot = q2rot(q(15), q(16), q(17));
 		rot *= rgs;
 		q.segment(15, 3) = rot2q(rot);
 
 		for (int i = 0; i < 18; ++i) {
-			qf[i][j] << q[i];
+			qf(j, i) = q(i);
 		}
 
 		/*err = calc_err(q, xd)
