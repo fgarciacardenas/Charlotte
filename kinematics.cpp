@@ -4,6 +4,7 @@
 #include <iostream>
 #include <Eigen/Dense>
 #include <qpOASES.hpp>
+
 using namespace Eigen;
 using namespace std;
 
@@ -76,7 +77,7 @@ int main()
 	VectorXi w = VectorXi::Ones(7);
 	// Quadratic program
 	QP_values qp = quad_prog(q, xd, max_iter, d_t, lamb, w, tol, com_xd);
-	QP_oases();
+	// QP_oases();
 	// Compare desired and current positions(x, y, z)
 	//compare(qf, xd, i);
 	// Find the center of mass
@@ -273,9 +274,9 @@ void QP_oases() {
 	cout << endl << "matrix H:" << H << endl;
 	
 	/* Setting up QProblemB object. */
-	QProblemB( 2 );
+	QProblemB qp_quad( 2 );
 
-	/*Options options;
+	Options options;
 	//options.enableFlippingBounds = BT_FALSE;
 	options.initialStatusBounds = ST_INACTIVE;
 	options.numRefinementSteps = 1;
@@ -283,39 +284,87 @@ void QP_oases() {
 	qp_quad.setOptions( options );
 
 	/* Solve first QP. */
-	/*int_t nWSR = 10;
+	int_t nWSR = 10;
 	qp_quad.init( H,g,lb,ub, nWSR,0 );
 
 	/* Get and print solution of first QP. */
-	/*real_t xOpt[2];
+	real_t xOpt[2];
 	qp_quad.getPrimalSolution( xOpt );
 	printf( "\nxOpt = [ %e, %e ];  objVal = %e\n\n", xOpt[0],xOpt[1],qp_quad.getObjVal() );
 	
 	/* Solve second QP. */
-	/*nWSR = 10;
+	nWSR = 10;
 	qp_quad.hotstart( g_new,lb_new,ub_new, nWSR,0 );
-// 	printf( "\nnWSR = %d\n\n", nWSR );
+	printf( "\nnWSR = %d\n\n", nWSR );
 
 	/* Get and print solution of second QP. */
-	/*qp_quad.getPrimalSolution( xOpt );
-	printf( "\nxOpt = [ %e, %e ];  objVal = %e\n\n", xOpt[0],xOpt[1],qp_quad.getObjVal() );*/
+	qp_quad.getPrimalSolution( xOpt );
+	printf( "\nxOpt = [ %e, %e ];  objVal = %e\n\n", xOpt[0],xOpt[1],qp_quad.getObjVal() );
 }
 
 
 QP_values quad_prog(VectorXd q, VectorXd xd, int max_iter, double d_t, int lamb, VectorXi w, double tol, Vector3d com_xd) {
 	// This function manages the minimization program and find the error of the desired function
 	MatrixXd qf(max_iter, 18);
-	int i = 0;
+	int itr = 0;
+	int j = 0;
 
-	while (i < max_iter) {
+	while (itr < max_iter) {
 		// Quadratic programming
 		Cost_values cost = costfunc(q, xd, lamb, w, com_xd);
 		MatrixXd h = (cost.h + cost.h.transpose()) / 2;
 		VectorXd f = cost.f;
-		cout << f;
 
-		/*
-		// Solver configuration
+		double arr_h[324];
+		Map<MatrixXd>(&arr_h[0], 18, 18) = h;
+
+		double arr_f[18];
+		Map<VectorXd>(&arr_f[0], 18, 1) = f;
+
+		USING_NAMESPACE_QPOASES
+
+		/* Setup data of first QP. */
+		real_t H[18 * 18];
+		for (int i = 0; i < 324; ++i) {
+			H[i] = arr_h[i];
+		}
+		real_t g[18];
+		for (int i = 0; i < 18; ++i) {
+			g[i] = arr_f[i];
+		}
+		real_t lb[18];
+		for (int i = 0; i < 18; ++i) {
+			lb[i] = 1e-10;
+		}
+		real_t ub[18];
+		for (int i = 0; i < 18; ++i) {
+			ub[i] = 1e10;
+		}
+
+		/* Setting up QProblemB object. */
+		QProblemB qp_quad(18);
+
+		Options options;
+		//options.enableFlippingBounds = BT_FALSE;
+		options.initialStatusBounds = ST_INACTIVE;
+		options.numRefinementSteps = 1;
+		options.enableCholeskyRefactorisation = 1;
+		qp_quad.setOptions(options);
+
+		/* Solve first QP. */
+		int_t nWSR = 300;
+		qp_quad.init(H, g, lb, ub, nWSR, 0);
+
+		/* Get and print solution of first QP. */
+		real_t xOpt[18];
+		VectorXd dq(18);
+		qp_quad.getPrimalSolution(xOpt);
+		for (int i = 0; i < 18; ++i) {
+			dq[i] = xOpt[i];
+		}
+		//printf("\nxOpt = [ %e, %e ];  objVal = %e\n\n", xOpt, qp_quad.getObjVal());
+
+		/* Solver configuration
 		solvers.options['show_progress'] = False;
 		solvers.options['maxiters'] = 1000;
 		solvers.options['abstol'] = 1e-12;
@@ -323,35 +372,43 @@ QP_values quad_prog(VectorXd q, VectorXd xd, int max_iter, double d_t, int lamb,
 		solvers.options['feastol'] = 1e-100;
 		solvers.options['xtol'] = 1e-12;
 		sol = solvers.qp(h, f);
-		dq = array(sol['x']);
+		dq = array(sol['x']); */
 
 		// Update the position vector
-		q[ar(15)] = q[ar(15)] + d_t * dq[ar(15)].T;
-
+		q.segment(0, 15) = q.segment(0, 15) + d_t * dq.segment(0, 15);
+		
 		// Update the orientation vector
-		rot_axis = dot(array([[cos(q[16]) * cos(q[17]), -sin(q[17]), 0],
-			[cos(q[16]) * sin(q[17]), cos(q[17]), 0],
-			[-sin(q[16]), 0, 1]]), [dq[15], dq[16], dq[17];
+		Matrix3d rot_axis, skw, rgs, rot;
+		rot_axis << cos(q(16)) * cos(q(17)), -sin(q(17)), 0,
+					cos(q(16)) * sin(q(17)),  cos(q(17)), 0,
+				                -sin(q(16)),           0, 1;
+		rot_axis *= dq.segment(15, 3);
 
-		skw = array([[0, -rot_axis[2], rot_axis[1]],
-			[rot_axis[2], 0, -rot_axis[0]],
-			[-rot_axis[1], rot_axis[0], 0;
+		skw <<           0, -rot_axis(2),  rot_axis(1),
+			   rot_axis(2),            0, -rot_axis(0),
+			  -rot_axis(1),  rot_axis(0),            0;
 
 		// Rodrigues rotation formula
-		rgs = np.eye(3) + sin(d_t) * skw + (1 - cos(d_t)) * skw ** 2;
-		rot = q2rot(q[15], q[16], q[17]).dot(rgs);
-		[q[15], q[16], q[17]] = rot2q(rot);
-		qf[i] = q;
+		rgs = Matrix3d::Identity() + sin(d_t) * skw + (1 - cos(d_t)) * pow(skw,2);
+		rot = q2rot(q(15), q(16), q(17));
+		rot *= rgs;
+		q.segment(15, 3) = rot2q(rot);
 
-		err = calc_err(q, xd)
+		for (int i = 0; i < 18; ++i) {
+			qf[i][j] << q[i];
+		}
+
+		/*err = calc_err(q, xd)
 		if (err <= tol) {
 			i++;
 			break
 		}*/
-		i++;
+
+		itr++;
+		j++;
 	}
 	
-	QP_values result = { qf, i };
+	QP_values result = { qf, itr };
 
 	return result;
 }
