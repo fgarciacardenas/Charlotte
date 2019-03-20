@@ -23,19 +23,20 @@ struct QP_values
 
 // Declare functions
 VectorXd initialize();
-VectorXd forward_kinematics(Vector3d q, Vector3d posb, Vector3d rotb, int leg, int mode);
-Matrix4d denavit_hartenberg(double theta, double alpha, double r, double d);
-Matrix4d reposition_leg(double ang, double dx, double dy);
-Matrix3d q2rot(double a, double b, double c);
-MatrixXd leg_jacobian(Vector3d q, int leg, Vector3d posb, Vector3d rotb);
-Cost_values costfunc(VectorXd q, VectorXd xd, int lamb, VectorXi w, VectorXd com_xd);
-Matrix3d jacobian_kinematics(Vector3d q, Vector3d rotb, int leg);
-MatrixXd com_pos(VectorXd q);
-VectorXd com_kinematics(Vector3d q, int leg, Vector3d posb, Vector3d rotb, Vector4d w);
-Matrix3d com_jacobian(VectorXd q, Vector3d posb, Vector3d rotb);
-Vector3d rot2q(Matrix3d rotm);
-QP_values quad_prog(VectorXd q, VectorXd xd, int max_iter, double d_t, int lamb, VectorXi w, double tol, Vector3d com_xd);
-void QP_oases();
+VectorXd forward_kinematics(const Vector3d& q, const Vector3d& posb, const Vector3d& rotb, const int& leg, const int& mode);
+Matrix4d denavit_hartenberg(const double& theta, const double& alpha, const double& r, const double& d);
+Matrix4d reposition_leg(const double& ang, const double& dx, const double& dy);
+Matrix3d q2rot(const double& a, const double& b, const double& c);
+MatrixXd leg_jacobian(const Vector3d& q, const int& leg, const Vector3d& posb, const Vector3d& rotb);
+Cost_values costfunc(const VectorXd& q, const VectorXd& xd, const int& lamb, const VectorXi& w, const VectorXd& com_xd);
+Matrix3d jacobian_kinematics(const Vector3d& q, const Vector3d& rotb, const int& leg);
+MatrixXd com_pos(const VectorXd& q);
+VectorXd com_kinematics(const Vector3d& q, const int& leg, const Vector3d& posb, const Vector3d& rotb, const Vector4d& w);
+Matrix3d com_jacobian(const VectorXd& q, const Vector3d& posb, const Vector3d& rotb);
+Vector3d rot2q(const Matrix3d& rotm);
+QP_values quad_prog(VectorXd q, const VectorXd& xd, const int& max_iter, const double& d_t, const int& lamb, const VectorXi& w, const double& tol, const Vector3d& com_xd);
+void compare(const MatrixXd& qf, const VectorXd& xd, const int& i);
+double calc_err(const VectorXd& q, const VectorXd& xd);
 
 // Constants
 const double pi = M_PI;
@@ -55,8 +56,8 @@ int main()
 
 	// Desired position[posb, leg1, leg2, leg3, leg4, rotb]:
 	VectorXd xd(18);
-	xd.segment(0, 3)  << 1, 0, 0;
-	xd.segment(3, 3)  << 0 + leg1_position(0), 0 + leg1_position(1), 0 + leg1_position(2);
+	xd.segment(0, 3)  << 3, 2, 0;
+	xd.segment(3, 3)  << 2 + leg1_position(0), 2 + leg1_position(1), 0 + leg1_position(2);
 	xd.segment(6, 3)  << 0 + leg2_position(0), 0 + leg2_position(1), 0 + leg2_position(2);
 	xd.segment(9, 3)  << 0 + leg3_position(0), 0 + leg3_position(1), 0 + leg3_position(2);
 	xd.segment(12, 3) << 0 + leg4_position(0), 0 + leg4_position(1), 0 + leg4_position(2);
@@ -66,21 +67,19 @@ int main()
 	//com_xd = cmass(q);
 	Vector3d com_xd = Vector3d::Zero();
 	// Maximum number of iterations
-	int max_iter = 20;
+	const int max_iter = 30;
 	// Time between signals
-	double d_t = 0.01;
+	const double d_t = 0.01;
 	// Gain of quadratic function
-	int lamb = -10;
+	const int lamb = -10;
 	// Maximum tolerance for minimization
-	double tol = 0.001;
+	const double tol = 0.001;
 	// Weights: [posb, leg1, leg2, leg3, leg4, rotb]
 	VectorXi w = VectorXi::Ones(7);
 	// Quadratic program
 	QP_values qp = quad_prog(q, xd, max_iter, d_t, lamb, w, tol, com_xd);
-	cout << endl << qp.qf << endl;
-	// QP_oases();
 	// Compare desired and current positions(x, y, z)
-	//compare(qf, xd, i);
+	compare(qp.qf, xd, qp.i);
 	// Find the center of mass
 	//[com, __, __] = com_system(q)
 
@@ -101,7 +100,7 @@ VectorXd initialize() {
 }
 
 
-VectorXd forward_kinematics(Vector3d q, Vector3d posb, Vector3d rotb, int leg, int mode) {
+VectorXd forward_kinematics(const Vector3d& q, const Vector3d& posb, const Vector3d& rotb, const int& leg, const int& mode) {
 	// This function finds the forward kinematics of each leg of the robot.
 	// Returns the position of the end - effector according to the position and orientation of the base.This is possible
 	// by calculating the jacobian of each leg a locating it in a homogeneous transformation matrix.
@@ -171,7 +170,7 @@ VectorXd forward_kinematics(Vector3d q, Vector3d posb, Vector3d rotb, int leg, i
 }
 
 
-Matrix4d denavit_hartenberg(double theta, double alpha, double r, double d) {
+Matrix4d denavit_hartenberg(const double& theta, const double& alpha, const double& r, const double& d) {
 	Matrix4d mat;
 	mat << cos(theta), -sin(theta) * cos(alpha),  sin(theta) * sin(alpha), r * cos(theta),
 		   sin(theta),  cos(theta) * cos(alpha), -cos(theta) * sin(alpha), r * sin(theta),
@@ -181,7 +180,7 @@ Matrix4d denavit_hartenberg(double theta, double alpha, double r, double d) {
 }
 
 
-Matrix4d reposition_leg(double ang, double dx, double dy) {
+Matrix4d reposition_leg(const double& ang, const double& dx, const double& dy) {
 	Matrix4d leg_pos;
 	leg_pos << cos(ang), -sin(ang), 0, dx,
 			   sin(ang),  cos(ang), 0, dy,
@@ -191,7 +190,7 @@ Matrix4d reposition_leg(double ang, double dx, double dy) {
 }
 
 
-Matrix3d q2rot(double a, double b, double c) {
+Matrix3d q2rot(const double& a, const double& b, const double& c) {
 	Matrix3d rx, ry, rz, rotm;
 	
 	rx << 1, 0, 0,
@@ -211,7 +210,7 @@ Matrix3d q2rot(double a, double b, double c) {
 }
 
 
-Vector3d rot2q(Matrix3d rotm) {
+Vector3d rot2q(const Matrix3d& rotm) {
 	double a, b, c;
 	Vector3d values;
 	a = atan2(rotm(2,1), rotm(2,2));
@@ -222,12 +221,12 @@ Vector3d rot2q(Matrix3d rotm) {
 }
 
 
-Matrix3d jacobian_kinematics(Vector3d q, Vector3d rotb, int leg) {
+Matrix3d jacobian_kinematics(const Vector3d& q, const Vector3d& rotb, const int& leg) {
 	Matrix3d jacobian;
-	double r1 = 5.5;     // Distance from servo 1 to 2
-	double r2 = 7.5;     // Distance from servo 2 to 3
-	double r3 = 22.5;    // Distance from servo 3 to effector
-	double r4 = 10.253;  // Distance from base to servo 1
+	const double r1 = 5.5;     // Distance from servo 1 to 2
+	const double r2 = 7.5;     // Distance from servo 2 to 3
+	const double r3 = 22.5;    // Distance from servo 3 to effector
+	const double r4 = 10.253;  // Distance from base to servo 1
 
 	if (leg == 1) {
 		jacobian << sin(q(0) + pi / 4) * (r1 + r2 * sin(q(1)) + r3 * sin(q(1) - q(2))), -cos(q(0) + pi / 4) * (r2 * cos(q(1)) + r3 * cos(q(1) - q(2))), r3 * cos(q(1) - q(2)) * cos(q(0) + pi / 4),
@@ -258,53 +257,7 @@ Matrix3d jacobian_kinematics(Vector3d q, Vector3d rotb, int leg) {
 }
 
 
-void QP_oases() {
-	USING_NAMESPACE_QPOASES
-
-	/* Setup data of first QP. */
-	real_t H[2 * 2] = { 1.0, 0.0, 0.0, 0.5 };
-	real_t g[2] = { 1.5, 1.0 };
-	real_t lb[2] = { 0.5, -2.0 };
-	real_t ub[2] = { 5.0, 2.0 };
-
-	/* Setup data of second QP. */
-	real_t g_new[2] = { 1.0, 1.5 };
-	real_t lb_new[2] = { 0.0, -1.0 };
-	real_t ub_new[2] = { 5.0, -0.5 };
-
-	cout << endl << "matrix H:" << H << endl;
-	
-	/* Setting up QProblemB object. */
-	QProblemB qp_quad( 2 );
-
-	Options options;
-	//options.enableFlippingBounds = BT_FALSE;
-	options.initialStatusBounds = ST_INACTIVE;
-	options.numRefinementSteps = 1;
-	options.enableCholeskyRefactorisation = 1;
-	qp_quad.setOptions( options );
-
-	/* Solve first QP. */
-	int_t nWSR = 10;
-	qp_quad.init( H,g,lb,ub, nWSR,0 );
-
-	/* Get and print solution of first QP. */
-	real_t xOpt[2];
-	qp_quad.getPrimalSolution( xOpt );
-	printf( "\nxOpt = [ %e, %e ];  objVal = %e\n\n", xOpt[0],xOpt[1],qp_quad.getObjVal() );
-	
-	/* Solve second QP. */
-	nWSR = 10;
-	qp_quad.hotstart( g_new,lb_new,ub_new, nWSR,0 );
-	printf( "\nnWSR = %d\n\n", nWSR );
-
-	/* Get and print solution of second QP. */
-	qp_quad.getPrimalSolution( xOpt );
-	printf( "\nxOpt = [ %e, %e ];  objVal = %e\n\n", xOpt[0],xOpt[1],qp_quad.getObjVal() );
-}
-
-
-QP_values quad_prog(VectorXd q, VectorXd xd, int max_iter, double d_t, int lamb, VectorXi w, double tol, Vector3d com_xd) {
+QP_values quad_prog(VectorXd q, const VectorXd& xd, const int& max_iter, const double& d_t, const int& lamb, const VectorXi& w, const double& tol, const Vector3d& com_xd) {
 	// This function manages the minimization program and find the error of the desired function
 	MatrixXd qf(max_iter, 18);
 	int itr = 0;
@@ -335,7 +288,7 @@ QP_values quad_prog(VectorXd q, VectorXd xd, int max_iter, double d_t, int lamb,
 		}
 		real_t lb[18];
 		for (int i = 0; i < 18; ++i) {
-			lb[i] = 1e-10;
+			lb[i] = -1e10;
 		}
 		real_t ub[18];
 		for (int i = 0; i < 18; ++i) {
@@ -350,10 +303,11 @@ QP_values quad_prog(VectorXd q, VectorXd xd, int max_iter, double d_t, int lamb,
 		options.initialStatusBounds = ST_INACTIVE;
 		options.numRefinementSteps = 1;
 		options.enableCholeskyRefactorisation = 1;
+		options.printLevel = PL_NONE;
 		qp_quad.setOptions(options);
 
 		/* Solve first QP. */
-		int_t nWSR = 300;
+		int_t nWSR = 10;
 		qp_quad.init(H, g, lb, ub, nWSR, 0);
 
 		/* Get and print solution of first QP. */
@@ -401,11 +355,11 @@ QP_values quad_prog(VectorXd q, VectorXd xd, int max_iter, double d_t, int lamb,
 			qf(j, i) = q(i);
 		}
 
-		/*err = calc_err(q, xd)
+		double err = calc_err(q, xd);
 		if (err <= tol) {
-			i++;
-			break
-		}*/
+			itr++;
+			break;
+		}
 
 		itr++;
 		j++;
@@ -417,7 +371,7 @@ QP_values quad_prog(VectorXd q, VectorXd xd, int max_iter, double d_t, int lamb,
 }
 
 
-Cost_values costfunc(VectorXd q, VectorXd xd, int lamb, VectorXi w, VectorXd com_xd) {
+Cost_values costfunc(const VectorXd& q, const VectorXd& xd, const int& lamb, const VectorXi& w, const VectorXd& com_xd) {
 	// This function finds the values of h and f in order to initialize the quadratic program.
 	// The inputs are q : actuated and sub - actuated angles, xd : desired position vector, p : weights and lamb : gain.
 
@@ -459,7 +413,7 @@ Cost_values costfunc(VectorXd q, VectorXd xd, int lamb, VectorXi w, VectorXd com
 }
 
 
-MatrixXd leg_jacobian(Vector3d q, int leg, Vector3d posb, Vector3d rotb) {
+MatrixXd leg_jacobian(const Vector3d& q, const int& leg, const Vector3d& posb, const Vector3d& rotb) {
 	Vector3d pos = forward_kinematics(q, posb, rotb, leg, 1);
 	Matrix3d jacobian = jacobian_kinematics(q, rotb, leg);
 	// Distance vector of the end - effector with respect to base
@@ -488,7 +442,33 @@ MatrixXd leg_jacobian(Vector3d q, int leg, Vector3d posb, Vector3d rotb) {
 }
 
 
-MatrixXd com_pos(VectorXd q) {
+double calc_err(const VectorXd& q, const VectorXd& xd) {
+	// Find the current position
+	Vector3d posb, rotb;
+	posb << q.segment(0, 3);
+	rotb << q.segment(15, 3);
+
+	// Forward kinematics[leg1, leg2, leg3, leg4]:
+	Vector3d leg1_position = forward_kinematics(q.segment(3, 3), posb, rotb, 1, 1);
+	Vector3d leg2_position = forward_kinematics(q.segment(6, 3), posb, rotb, 2, 1);
+	Vector3d leg3_position = forward_kinematics(q.segment(9, 3), posb, rotb, 3, 1);
+	Vector3d leg4_position = forward_kinematics(q.segment(12, 3), posb, rotb, 4, 1);
+
+	// Find the error of each leg and the base
+	Vector3d err_leg1 = xd.segment(3, 3) - leg1_position;
+	Vector3d err_leg2 = xd.segment(6, 3) - leg2_position;
+	Vector3d err_leg3 = xd.segment(9, 3) - leg3_position;
+	Vector3d err_leg4 = xd.segment(12, 3) - leg4_position;
+	Vector3d err_posb = xd.segment(0, 3) - posb;
+	Vector3d err_rotb = xd.segment(15, 3) - rotb;
+
+	// Sum of the squared errors
+	double err = sqrt(pow(err_leg1(0), 2) + pow(err_leg1(1), 2) + pow(err_leg1(2), 2) + pow(err_leg2(0), 2) + pow(err_leg2(1), 2) + pow(err_leg2(2), 2) + pow(err_leg3(0), 2) + pow(err_leg3(1), 2) + pow(err_leg3(2), 2) + pow(err_leg4(0), 2) + pow(err_leg4(1), 2) + pow(err_leg4(2), 2) + pow(err_posb(0), 2) + pow(err_posb(1), 2) + pow(err_posb(2), 2) + pow(err_rotb(0), 2) + pow(err_rotb(1), 2) + pow(err_rotb(2), 2));
+	return err;
+}
+
+
+MatrixXd com_pos(const VectorXd& q) {
 	// Weights
 	double w_com1 = 0.075;
 	double w_com2 = 0.15;
@@ -518,20 +498,20 @@ MatrixXd com_pos(VectorXd q) {
 }
 
 
-VectorXd com_kinematics(Vector3d q, int leg, Vector3d posb, Vector3d rotb, Vector4d w) {
+VectorXd com_kinematics(const Vector3d& q, const int& leg, const Vector3d& posb, const Vector3d& rotb, const Vector4d& w) {
 	// Variables
-	double r1 = 5.5;     // Distance from servo 1 to 2
-	double r2t = 3.75;   // Distance from servo 2 to com2
-	double r2 = 7.5;     // Distance from servo 2 to 3
-	double r3t = 11;     // Distance from servo 3 to com3
-	double r3 = 22.5;    // Distance from servo 3 to end - effector
-	double r4 = 10.253;  // Distance from base to servo 1
+	const double r1 = 5.5;     // Distance from servo 1 to 2
+	const double r2t = 3.75;   // Distance from servo 2 to com2
+	const double r2 = 7.5;     // Distance from servo 2 to 3
+	const double r3t = 11;     // Distance from servo 3 to com3
+	const double r3 = 22.5;    // Distance from servo 3 to end - effector
+	const double r4 = 10.253;  // Distance from base to servo 1
 
 	// Weights
-	double w_com1 = w(0);
-	double w_com2 = w(1);
-	double w_com3 = w(2);
-	double w_total = w(3);
+	const double w_com1 = w(0);
+	const double w_com2 = w(1);
+	const double w_com3 = w(2);
+	const double w_total = w(3);
 
 	// Denavit - Hartenberg matrices
 	Matrix4d m_1  = denavit_hartenberg(q(0), pi / 2, r1, 0);
@@ -584,23 +564,23 @@ VectorXd com_kinematics(Vector3d q, int leg, Vector3d posb, Vector3d rotb, Vecto
 }
 
 
-Matrix3d com_jacobian(VectorXd q, Vector3d posb, Vector3d rotb) {
+Matrix3d com_jacobian(const VectorXd& q, const Vector3d& posb, const Vector3d& rotb) {
 	Matrix3d jacobian1_com2, jacobian1_com3, jacobian2_com2, jacobian2_com3, jacobian3_com2, jacobian3_com3, jacobian4_com2, jacobian4_com3, com_jacobian;
 	
 	// Variables
-	double r1 = 5.5;     // Distance from servo 1 to 2
-	double r2t = 3.75;   // Distance from servo 2 to com2
-	double r2 = 7.5;     // Distance from servo 2 to 3
-	double r3t = 11;     // Distance from servo 3 to com3
-	double r3 = 22.5;    // Distance from servo 3 to end - effector
-	double r4 = 10.253;  // Distance from base to servo 1
+	const double r1 = 5.5;     // Distance from servo 1 to 2
+	const double r2t = 3.75;   // Distance from servo 2 to com2
+	const double r2 = 7.5;     // Distance from servo 2 to 3
+	const double r3t = 11;     // Distance from servo 3 to com3
+	const double r3 = 22.5;    // Distance from servo 3 to end - effector
+	const double r4 = 10.253;  // Distance from base to servo 1
 
 	// Weights
-	double w_com1 = 0.075;
-	double w_com2 = 0.15;
-	double w_com3 = 0.2;
-	double w_base = 0.7;
-	double w_total = 4 * w_com1 + 4 * w_com2 + 4 * w_com3 + w_base;
+	const double w_com1 = 0.075;
+	const double w_com2 = 0.15;
+	const double w_com3 = 0.2;
+	const double w_base = 0.7;
+	const double w_total = 4 * w_com1 + 4 * w_com2 + 4 * w_com3 + w_base;
 
 	// Homogeneous Transformation Matrix - Reposition in respect to position and orientation of the base
 	Matrix3d rotm = q2rot(rotb(0), rotb(1), rotb(2));
@@ -658,4 +638,32 @@ Matrix3d com_jacobian(VectorXd q, Vector3d posb, Vector3d rotb) {
 	com_jacobian = jacobian1_com2 + jacobian1_com3 + jacobian2_com2 + jacobian2_com3 + jacobian3_com2 + jacobian3_com3 + jacobian4_com2 + jacobian4_com3;
 
 	return com_jacobian;
+}
+
+
+void compare(const MatrixXd& qf, const VectorXd& xd, const int& i) {
+	// Final position
+	Vector3d posb, rotb;
+	posb <<  qf(i - 1, 0),  qf(i - 1, 1),  qf(i - 1, 2);
+	rotb << qf(i - 1, 15), qf(i - 1, 16), qf(i - 1, 17);
+	
+	Vector3d leg1, leg2, leg3, leg4;
+	leg1 <<  qf(i - 1, 3),  qf(i - 1, 4),  qf(i - 1, 5);
+	leg2 <<  qf(i - 1, 6),  qf(i - 1, 7),  qf(i - 1, 8);
+	leg3 <<  qf(i - 1, 9), qf(i - 1, 10), qf(i - 1, 11);
+	leg4 << qf(i - 1, 12), qf(i - 1, 13), qf(i - 1, 14);
+
+	// Forward kinematics[leg1, leg2, leg3, leg4]:
+	Vector3d leg1_position = forward_kinematics(leg1, posb, rotb, 1, 1);
+	Vector3d leg2_position = forward_kinematics(leg2, posb, rotb, 2, 1);
+	Vector3d leg3_position = forward_kinematics(leg3, posb, rotb, 3, 1);
+	Vector3d leg4_position = forward_kinematics(leg4, posb, rotb, 4, 1);
+
+	IOFormat CommaInitFmt(StreamPrecision, DontAlignCols, ", ", ", ", "", "", " ", ";");
+	cout << "Desired pos:" << xd.segment(3, 3).format(CommaInitFmt) << "\n" << "            " << xd.segment(6, 3).format(CommaInitFmt) << endl;
+	cout << "            " << xd.segment(9, 3).format(CommaInitFmt) << "\n" << "            " << xd.segment(12, 3).format(CommaInitFmt) << endl;
+	cout << "Final pos  :" << leg1_position.format(CommaInitFmt) << "\n" << "            " << leg2_position.format(CommaInitFmt) << endl;
+	cout << "            " << leg3_position.format(CommaInitFmt) << "\n" << "            " << leg4_position.format(CommaInitFmt) << endl;
+	cout << "Body pos   :" << xd.segment(0, 3).format(CommaInitFmt) << "\n" << "            " << posb.format(CommaInitFmt) << endl;
+	cout << "Body rot   :" << xd.segment(15, 3).format(CommaInitFmt) << "\n" << "            " << rotb.format(CommaInitFmt) << endl;
 }
