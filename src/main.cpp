@@ -17,11 +17,13 @@ struct Cost_values
 };
 
 void forward_kinematics(Vector3d& pos, const Vector3d& q, const Vector3d& posb, const Vector3d& rotb, const int& leg);
+void analytic_jacobian(Matrix3d& jacobian, const Vector3d& q, const Vector3d& current_pos, const Vector3d& posb, const Vector3d& rotb, const int& leg);
 
 class Legs
 {
 	public:
 	Vector3d leg1, leg2, leg3, leg4, posb, rotb, com;
+	Matrix3d leg1_jacobian, leg2_jacobian, leg3_jacobian, leg4_jacobian;
 
 	void update_position(const VectorXd& q)
 	{
@@ -31,6 +33,14 @@ class Legs
 		forward_kinematics(leg2, q.segment(6, 3), posb, rotb, 2);
 		forward_kinematics(leg3, q.segment(9, 3), posb, rotb, 3);
 		forward_kinematics(leg4, q.segment(12, 3), posb, rotb, 4);
+	}
+
+	void update_jacobian(const VectorXd& q)	
+	{
+		analytic_jacobian(leg1_jacobian, q.segment(3, 3), leg1, posb, rotb, 1);
+		analytic_jacobian(leg2_jacobian, q.segment(6, 3), leg2, posb, rotb, 2);
+		analytic_jacobian(leg3_jacobian, q.segment(9, 3), leg3, posb, rotb, 3);
+		analytic_jacobian(leg4_jacobian, q.segment(12, 3), leg4, posb, rotb, 4);
 	}
 };
 
@@ -61,7 +71,7 @@ public:
 		this->w = VectorXi::Ones(7);
 		this->w(0) = 1;
 		this->w(5) = 1;
-		this->w(6) = 0;
+		this->w(6) = 1;
 	}
 };
 
@@ -71,14 +81,13 @@ void denavit_hartenberg(Matrix4d& mat, const double& theta, const double& alpha,
 void reposition_leg(Matrix4d& leg_pos, const double& ang, const double& dx, const double& dy);
 void q2rot(Matrix3d& rotm, const double& a, const double& b, const double& c);
 void rot2q(Vector3d& values, const Matrix3d& rotm);
-void jacobian_kinematics(Matrix3d& jacobian, const Vector3d& q, const Vector3d& rotb, const int& leg);
 void quad_prog(MatrixXd& qf, VectorXd q, const VectorXd& xd, const Parameters& parameters, const Vector3d& com_xd, Legs& pos);
 void costfunc(Cost_values& cost, const VectorXd& q, const VectorXd& xd, const int& lamb, const VectorXi& w, const VectorXd& com_xd, Legs& pos);
 void leg_jacobian(MatrixXd& leg_jacobian, const Vector3d& q, const int& leg, Legs& pos);
 void calc_err(double& err, const VectorXd& q, const VectorXd& xd, Legs& pos);
-void com_pos(Vector3d& com_pos, const VectorXd& q, const Legs& pos);
-void com_kinematics(VectorXd& position, const Vector3d& q, const int& leg, const Legs& pos, const Vector4d& w);
-void com_jacobian(MatrixXd& com_jacobian, const VectorXd& q);
+void com_pos(Vector3d& com_pos, const VectorXd& q);
+void com_kinematics(VectorXd& position, const Vector3d& q, const int& leg, const Vector3d& posb, const Vector3d& rotb, const Vector4d& w);
+void com_jacobian(MatrixXd& com_jacobian, const VectorXd& q, const Vector3d& current_pos);
 void full_kinematics(VectorXd& pos, const Vector3d& q, const Vector3d& posb, const Vector3d& rotb, const int& leg);
 void compare(const VectorXd& xd, const Vector3d& com_xd, const Legs& pos);
 
@@ -94,18 +103,19 @@ int main() {
 
 	initialize(q);
 	pos.update_position(q);
+	pos.update_jacobian(q);
 
 	// Desired position[posb, leg1, leg2, leg3, leg4, rotb]:
 	xd.segment(0, 3)  << 3, 2, 0;
-	xd.segment(3, 3)  << 2 + pos.leg1(0), 2 + pos.leg1(1), 0 + pos.leg1(2);
+	xd.segment(3, 3)  << 3 + pos.leg1(0), 2 + pos.leg1(1), 0 + pos.leg1(2);
 	xd.segment(6, 3)  << 0 + pos.leg2(0), 0 + pos.leg2(1), 0 + pos.leg2(2);
 	xd.segment(9, 3)  << 0 + pos.leg3(0), 0 + pos.leg3(1), 0 + pos.leg3(2);
 	xd.segment(12, 3) << 0 + pos.leg4(0), 0 + pos.leg4(1), 0 + pos.leg4(2);
-	xd.segment(15, 3) << 10 * pi / 180, 0 * pi / 180, 0 * pi / 180;
+	xd.segment(15, 3) << 0 * pi / 180, 0 * pi / 180, 0 * pi / 180;
 
 	// Desired position of COM
 	//com_xd = cmass(q);
-	com_xd << 2.37937, 0.76184, -3.80319;
+	com_xd << 2, 0.8, -3.8;
 	// Quadratic program
 	auto start = std::chrono::high_resolution_clock::now();
 	quad_prog(qf, q, xd, parameters, com_xd, pos);
@@ -114,8 +124,6 @@ int main() {
 	std::cout << "Elapsed time qp: " << elapsed.count() << " s\n";
 	// Compare desired and current positions(x, y, z)
 	compare(xd, com_xd, pos);
-	// Find the center of mass
-	//[com, __, __] = com_system(q)
 
 	std::cin.get();
 }
@@ -220,37 +228,36 @@ void rot2q(Vector3d& values, const Matrix3d& rotm) {
 }
 
 
-void jacobian_kinematics(Matrix3d& jacobian, const Vector3d& q, const Vector3d& rotb, const int& leg) {
-	const double r1 = 5.5;     // Distance from servo 1 to 2
-	const double r2 = 7.5;     // Distance from servo 2 to 3
-	const double r3 = 22.5;    // Distance from servo 3 to effector
-	const double r4 = 10.253;  // Distance from base to servo 1
-	Matrix3d rotm;
+void analytic_jacobian(Matrix3d& jacobian, const Vector3d& q, const Vector3d& current_pos, const Vector3d& posb, const Vector3d& rotb, const int& leg) {
+	// Analytic jacobian for leg position. Returns a 3x3 matrix with input q = [q1, q2, q3]
+	Vector3d dq;
+	Vector3d pos_dq;
+	double delta = 0.00001;
 
-	if (leg == 1) {
-		jacobian << sin(q(0) + pi / 4) * (r1 + r2 * sin(q(1)) + r3 * sin(q(1) - q(2))), -cos(q(0) + pi / 4) * (r2 * cos(q(1)) + r3 * cos(q(1) - q(2))), r3 * cos(q(1) - q(2)) * cos(q(0) + pi / 4),
-			        -cos(q(0) + pi / 4) * (r1 + r2 * sin(q(1)) + r3 * sin(q(1) - q(2))), -sin(q(0) + pi / 4) * (r2 * cos(q(1)) + r3 * cos(q(1) - q(2))), r3 * cos(q(1) - q(2)) * sin(q(0) + pi / 4),
-			        0, r2 * sin(q(1)) + r3 * sin(q(1) - q(2)), -r3 * sin(q(1) - q(2));
+	for (int i = 0; i <= 2; i++) {
+		// Copy initial articular configuration and use delta increment on index i
+		dq = q;
+		dq(i) += delta;
+		
+		// Homegeneous Transformation Matrix after increment
+		if (leg == 1) {
+			forward_kinematics(pos_dq, dq, posb, rotb, 1);
+		}
+		else if (leg == 2) {
+			forward_kinematics(pos_dq, dq, posb, rotb, 2);
+		}
+		else if (leg == 3) {
+			forward_kinematics(pos_dq, dq, posb, rotb, 3);
+		}
+		else {
+			forward_kinematics(pos_dq, dq, posb, rotb, 4);
+		}
+
+		// Finite difference
+		jacobian(0, i) = (pos_dq(0) - current_pos(0)) / delta;
+		jacobian(1, i) = (pos_dq(1) - current_pos(1)) / delta;
+		jacobian(2, i) = (pos_dq(2) - current_pos(2)) / delta;
 	}
-	else if (leg == 2) {
-		jacobian << cos(q(0) + pi / 4) * (r1 + r2 * sin(q(1)) + r3 * sin(q(1) - q(2))), sin(q(0) + pi / 4) * (r2 * cos(q(1)) + r3 * cos(q(1) - q(2))), -r3 * cos(q(1) - q(2)) * sin(q(0) + pi / 4),
-				    sin(q(0) + pi / 4) * (r1 + r2 * sin(q(1)) + r3 * sin(q(1) - q(2))), -cos(q(0) + pi / 4) * (r2 * cos(q(1)) + r3 * cos(q(1) - q(2))), r3 * cos(q(1) - q(2)) * cos(q(0) + pi / 4),
-					0, r2 * sin(q(1)) + r3 * sin(q(1) - q(2)), -r3 * sin(q(1) - q(2));
-	}
-	else if (leg == 3) {
-		jacobian << -cos(q(0) + pi / 4) * (r1 + r2 * sin(q(1)) + r3 * sin(q(1) - q(2))), -sin(q(0) + pi / 4) * (r2 * cos(q(1)) + r3 * cos(q(1) - q(2))), r3 * cos(q(1) - q(2)) * sin(q(0) + pi / 4),
-				    -sin(q(0) + pi / 4) * (r1 + r2 * sin(q(1)) + r3 * sin(q(1) - q(2))), cos(q(0) + pi / 4) * (r2 * cos(q(1)) + r3 * cos(q(1) - q(2))), -r3 * cos(q(1) - q(2)) * cos(q(0) + pi / 4),
-			        0, r2 * sin(q(1)) + r3 * sin(q(1) - q(2)), -r3 * sin(q(1) - q(2));
-	}
-	else {
-		jacobian << -sin(q(0) + pi / 4) * (r1 + r2 * sin(q(1)) + r3 * sin(q(1) - q(2))), cos(q(0) + pi / 4) * (r2 * cos(q(1)) + r3 * cos(q(1) - q(2))), -r3 * cos(q(1) - q(2)) * cos(q(0) + pi / 4),
-			cos(q(0) + pi / 4) * (r1 + r2 * sin(q(1)) + r3 * sin(q(1) - q(2))), sin(q(0) + pi / 4) * (r2 * cos(q(1)) + r3 * cos(q(1) - q(2))), -r3 * cos(q(1) - q(2)) * sin(q(0) + pi / 4),
-			0, r2 * sin(q(1)) + r3 * sin(q(1) - q(2)), -r3 * sin(q(1) - q(2));
-	}
-	
-	// Homogeneous Transformation Matrix - Reposition in respect to position and orientation of the base
-	q2rot(rotm, rotb(0), rotb(1), rotb(2));
-	jacobian *= rotm;
 }
 
 
@@ -344,6 +351,7 @@ void quad_prog(MatrixXd& qf, VectorXd q, const VectorXd& xd, const Parameters& p
 		}
 
 		pos.update_position(q);
+		pos.update_jacobian(q);
 		itr++;
 		j++;
 	}
@@ -368,8 +376,8 @@ void costfunc(Cost_values& cost, const VectorXd& q, const VectorXd& xd, const in
 	j6 << Matrix<double, 3, 15>::Zero(), Matrix3d::Identity();
 
 	// Position and jacobian of center of mass
-	com_pos(pos.com, q, pos);
-	com_jacobian(j_com, q);
+	com_pos(pos.com, q);
+	com_jacobian(j_com, q, pos.com);
 
 	// Values of h and f(Hessian and vector of linear elements) :
 	MatrixXd h = w(0) * j1.transpose()*j1 + w(1) * j2.transpose()*j2 + w(2) * j3.transpose()*j3 + w(3) * j4.transpose()*j4 + w(4) * j5.transpose()*j5 + w(5) * j6.transpose()*j6 + w(6) * j_com.transpose()*j_com;
@@ -382,8 +390,6 @@ void costfunc(Cost_values& cost, const VectorXd& q, const VectorXd& xd, const in
 
 void leg_jacobian(MatrixXd& leg_jacobian, const Vector3d& q, const int& leg, Legs& pos) {
 	Matrix3d jacobian, m_skew;
-
-	jacobian_kinematics(jacobian, q, pos.rotb, leg);
 	
 	if (leg == 1) {
 		// Distance vector of the end - effector with respect to base
@@ -391,10 +397,10 @@ void leg_jacobian(MatrixXd& leg_jacobian, const Vector3d& q, const int& leg, Leg
 
 		// Skew - Symmetric matrix
 		m_skew << 0, -d(2), d(1),
-			d(2), 0, -d(0),
-			-d(1), d(0), 0;
+			      d(2), 0, -d(0),
+			      -d(1), d(0), 0;
 
-		leg_jacobian << Matrix3d::Identity(), jacobian, Matrix<double, 3, 9>::Identity(), m_skew;
+		leg_jacobian << Matrix3d::Identity(), pos.leg1_jacobian, Matrix<double, 3, 9>::Identity(), m_skew;
 	}
 	else if (leg == 2) {
 		// Distance vector of the end - effector with respect to base
@@ -405,7 +411,7 @@ void leg_jacobian(MatrixXd& leg_jacobian, const Vector3d& q, const int& leg, Leg
 			d(2), 0, -d(0),
 			-d(1), d(0), 0;
 
-		leg_jacobian << Matrix3d::Identity(), Matrix3d::Zero(), jacobian, Matrix<double, 3, 6>::Identity(), m_skew;
+		leg_jacobian << Matrix3d::Identity(), Matrix3d::Zero(), pos.leg2_jacobian, Matrix<double, 3, 6>::Identity(), m_skew;
 	}
 	else if (leg == 3) {
 		// Distance vector of the end - effector with respect to base
@@ -416,7 +422,7 @@ void leg_jacobian(MatrixXd& leg_jacobian, const Vector3d& q, const int& leg, Leg
 			d(2), 0, -d(0),
 			-d(1), d(0), 0;
 
-		leg_jacobian << Matrix3d::Identity(), Matrix<double, 3, 6>::Identity(), jacobian, Matrix3d::Zero(), m_skew;
+		leg_jacobian << Matrix3d::Identity(), Matrix<double, 3, 6>::Identity(), pos.leg3_jacobian, Matrix3d::Zero(), m_skew;
 	}
 	else {
 		// Distance vector of the end - effector with respect to base
@@ -427,7 +433,7 @@ void leg_jacobian(MatrixXd& leg_jacobian, const Vector3d& q, const int& leg, Leg
 			d(2), 0, -d(0),
 			-d(1), d(0), 0;
 
-		leg_jacobian << Matrix3d::Identity(), Matrix<double, 3, 9>::Identity(), jacobian, m_skew;
+		leg_jacobian << Matrix3d::Identity(), Matrix<double, 3, 9>::Identity(), pos.leg4_jacobian, m_skew;
 	}
 }
 
@@ -442,11 +448,13 @@ void calc_err(double& err, const VectorXd& q, const VectorXd& xd, Legs& pos) {
 	Vector3d err_rotb = xd.segment(15, 3) - pos.rotb;
 
 	// Sum of the squared errors
-	err = sqrt(pow(err_leg1(0), 2) + pow(err_leg1(1), 2) + pow(err_leg1(2), 2) + pow(err_leg2(0), 2) + pow(err_leg2(1), 2) + pow(err_leg2(2), 2) + pow(err_leg3(0), 2) + pow(err_leg3(1), 2) + pow(err_leg3(2), 2) + pow(err_leg4(0), 2) + pow(err_leg4(1), 2) + pow(err_leg4(2), 2) + pow(err_posb(0), 2) + pow(err_posb(1), 2) + pow(err_posb(2), 2) + pow(err_rotb(0), 2) + pow(err_rotb(1), 2) + pow(err_rotb(2), 2));
+	err = sqrt(pow(err_leg1(0), 2) + pow(err_leg1(1), 2) + pow(err_leg1(2), 2) + pow(err_leg2(0), 2) + pow(err_leg2(1), 2) + pow(err_leg2(2), 2) 
+		+ pow(err_leg3(0), 2) + pow(err_leg3(1), 2) + pow(err_leg3(2), 2) + pow(err_leg4(0), 2) + pow(err_leg4(1), 2) + pow(err_leg4(2), 2) 
+		+ pow(err_posb(0), 2) + pow(err_posb(1), 2) + pow(err_posb(2), 2) + pow(err_rotb(0), 2) + pow(err_rotb(1), 2) + pow(err_rotb(2), 2));
 }
 
 
-void com_pos(Vector3d& com_pos, const VectorXd& q, const Legs& pos) {
+void com_pos(Vector3d& com_pos, const VectorXd& q) {
 	// Weights
 	double w_com1 = 0.075;
 	double w_com2 = 0.15;
@@ -455,24 +463,29 @@ void com_pos(Vector3d& com_pos, const VectorXd& q, const Legs& pos) {
 	double w_total = 4 * w_com1 + 4 * w_com2 + 4 * w_com3 + w_base;
 	Vector4d w;
 	VectorXd leg1_com(12), leg2_com(12), leg3_com(12), leg4_com(12);
+	Vector3d posb, rotb;
+	posb << q.segment(0, 3);
+	rotb << q.segment(15, 3);
 
 	w << w_com1, w_com2, w_com3, w_total;
 
 	// Find the center of mass
-	com_kinematics(leg1_com, q.segment(3, 3), 1, pos, w);
-	com_kinematics(leg2_com, q.segment(6, 3), 2, pos, w);
-	com_kinematics(leg3_com, q.segment(9, 3), 3, pos, w);
-	com_kinematics(leg4_com, q.segment(12, 3), 4, pos, w);
+	com_kinematics(leg1_com, q.segment(3, 3), 1, posb, rotb, w);
+	com_kinematics(leg2_com, q.segment(6, 3), 2, posb, rotb, w);
+	com_kinematics(leg3_com, q.segment(9, 3), 3, posb, rotb, w);
+	com_kinematics(leg4_com, q.segment(12, 3), 4, posb, rotb, w);
 
 	// COM of the base
-	Vector3d base = (w_base / w_total) * pos.posb;
+	Vector3d base = (w_base / w_total) * posb;
 
 	// COM position
-	com_pos << leg1_com.segment(0, 3) + leg1_com.segment(3, 3) + leg1_com.segment(6, 3) + leg2_com.segment(0, 3) + leg2_com.segment(3, 3) + leg2_com.segment(6, 3) + leg3_com.segment(0, 3) + leg3_com.segment(3, 3) + leg3_com.segment(6, 3) + leg4_com.segment(0, 3) + leg4_com.segment(3, 3) + leg4_com.segment(6, 3) + base;
+	com_pos << leg1_com.segment(0, 3) + leg1_com.segment(3, 3) + leg1_com.segment(6, 3) + leg2_com.segment(0, 3) + leg2_com.segment(3, 3) 
+		+ leg2_com.segment(6, 3) + leg3_com.segment(0, 3) + leg3_com.segment(3, 3) + leg3_com.segment(6, 3) + leg4_com.segment(0, 3) 
+		+ leg4_com.segment(3, 3) + leg4_com.segment(6, 3) + base;
 }
 
 
-void com_kinematics(VectorXd& position, const Vector3d& q, const int& leg, const Legs& pos, const Vector4d& w) {
+void com_kinematics(VectorXd& position, const Vector3d& q, const int& leg, const Vector3d& posb, const Vector3d& rotb, const Vector4d& w) {
 	// Variables
 	const double r1 = 5.5;     // Distance from servo 1 to 2
 	const double r2t = 3.75;   // Distance from servo 2 to com2
@@ -491,11 +504,11 @@ void com_kinematics(VectorXd& position, const Vector3d& q, const int& leg, const
 	denavit_hartenberg(m_3, q(2), pi, -r3, 0);
 
 	// Homogeneous Transformation Matrix - Reposition in respect to position and orientation of the base
-	q2rot(rotm, pos.rotb(0), pos.rotb(1), pos.rotb(2));
+	q2rot(rotm, rotb(0), rotb(1), rotb(2));
 
-	trans << rotm(0, 0), rotm(0, 1), rotm(0, 2), pos.posb(0),
-			 rotm(1, 0), rotm(1, 1), rotm(1, 2), pos.posb(1),
-			 rotm(2, 0), rotm(2, 1), rotm(2, 2), pos.posb(2),
+	trans << rotm(0, 0), rotm(0, 1), rotm(0, 2), posb(0),
+			 rotm(1, 0), rotm(1, 1), rotm(1, 2), posb(1),
+			 rotm(2, 0), rotm(2, 1), rotm(2, 2), posb(2),
 			 0, 0, 0, 1;
 
 	// Position of the legs with respect to the base
@@ -530,26 +543,25 @@ void com_kinematics(VectorXd& position, const Vector3d& q, const int& leg, const
 }
 
 
-void com_jacobian(MatrixXd& com_jacobian, const VectorXd& q) {
-	// Variables
-	const double r1 = 5.5;     // Distance from servo 1 to 2
-	const double r2t = 3.75;   // Distance from servo 2 to com2
-	const double r2 = 7.5;     // Distance from servo 2 to 3
-	const double r3t = 11;     // Distance from servo 3 to com3
-	const double r3 = 22.5;    // Distance from servo 3 to end - effector
-	const double r4 = 10.253;  // Distance from base to servo 1
+void com_jacobian(MatrixXd& com_jacobian, const VectorXd& q, const Vector3d& current_pos) {
+	// Analytic jacobian for leg position. Returns a 3x3 matrix with input q = [q1, q2, q3]
+	VectorXd dq;
+	Vector3d pos_dq;
+	double delta = 0.00001;
 
-	// Weights
-	const double w_com1 = 0.075;
-	const double w_com2 = 0.15;
-	const double w_com3 = 0.2;
-	const double w_base = 0.7;
-	const double w_total = 4 * w_com1 + 4 * w_com2 + 4 * w_com3 + w_base;
+	for (int i = 0; i <= 17; i++) {
+		// Copy initial articular configuration and use delta increment on index i
+		dq = q;
+		dq(i) += delta;
 
-	// COM jacobian
-	com_jacobian << w_base + 4 * w_com1 + 4 * w_com2 + 4 * w_com3, 0, 0, (sqrt(2)*(r1*w_com2 + r1 * w_com3 + r2 * w_com3*sin(q(4)) + r2t * w_com2*sin(q(4)) + r3t * w_com3*sin(q(4) - q(5)))*(cos(q(3))*cos(q(16))*cos(q(17)) + cos(q(3))*cos(q(15))*sin(q(17)) + cos(q(16))*cos(q(17))*sin(q(3)) - cos(q(15))*sin(q(3))*sin(q(17)) - cos(q(3))*cos(q(17))*sin(q(15))*sin(q(16)) + cos(q(17))*sin(q(3))*sin(q(15))*sin(q(16)))) / 2, (sin(q(15))*sin(q(17)) + cos(q(15))*cos(q(17))*sin(q(16)))*(r2*w_com3*sin(q(4)) + r2t * w_com2*sin(q(4)) + r3t * w_com3*sin(q(4) - q(5))) + sin(q(3) + pi / 4)*(cos(q(15))*sin(q(17)) - cos(q(17))*sin(q(15))*sin(q(16)))*(r2*w_com3*cos(q(4)) + r2t * w_com2*cos(q(4)) + r3t * w_com3*cos(q(4) - q(5))) - cos(q(16))*cos(q(17))*cos(q(3) + pi / 4)*(r2*w_com3*cos(q(4)) + r2t * w_com2*cos(q(4)) + r3t * w_com3*cos(q(4) - q(5))), r3t*w_com3*cos(q(4) - q(5))*cos(q(16))*cos(q(17))*cos(q(3) + pi / 4) - r3t * w_com3*cos(q(4) - q(5))*sin(q(3) + pi / 4)*(cos(q(15))*sin(q(17)) - cos(q(17))*sin(q(15))*sin(q(16))) - r3t * w_com3*sin(q(4) - q(5))*(sin(q(15))*sin(q(17)) + cos(q(15))*cos(q(17))*sin(q(16))), (sqrt(2)*(r1*w_com2 + r1 * w_com3 + r2 * w_com3*sin(q(7)) + r2t * w_com2*sin(q(7)) + r3t * w_com3*sin(q(7) - q(8)))*(cos(q(6))*cos(q(16))*cos(q(17)) - cos(q(6))*cos(q(15))*sin(q(17)) - cos(q(16))*cos(q(17))*sin(q(6)) - cos(q(15))*sin(q(6))*sin(q(17)) + cos(q(6))*cos(q(17))*sin(q(15))*sin(q(16)) + cos(q(17))*sin(q(6))*sin(q(15))*sin(q(16)))) / 2, (sin(q(15))*sin(q(17)) + cos(q(15))*cos(q(17))*sin(q(16)))*(r2*w_com3*sin(q(7)) + r2t * w_com2*sin(q(7)) + r3t * w_com3*sin(q(7) - q(8))) + cos(q(6) + pi / 4)*(cos(q(15))*sin(q(17)) - cos(q(17))*sin(q(15))*sin(q(16)))*(r2*w_com3*cos(q(7)) + r2t * w_com2*cos(q(7)) + r3t * w_com3*cos(q(7) - q(8))) + cos(q(16))*cos(q(17))*sin(q(6) + pi / 4)*(r2*w_com3*cos(q(7)) + r2t * w_com2*cos(q(7)) + r3t * w_com3*cos(q(7) - q(8))), -r3t * w_com3*sin(q(7) - q(8))*(sin(q(15))*sin(q(17)) + cos(q(15))*cos(q(17))*sin(q(16))) - r3t * w_com3*cos(q(7) - q(8))*cos(q(6) + pi / 4)*(cos(q(15))*sin(q(17)) - cos(q(17))*sin(q(15))*sin(q(16))) - r3t * w_com3*cos(q(7) - q(8))*cos(q(16))*cos(q(17))*sin(q(6) + pi / 4), -(sqrt(2)*(r1*w_com2 + r1 * w_com3 + r2 * w_com3*sin(q(10)) + r2t * w_com2*sin(q(10)) + r3t * w_com3*sin(q(10) - q(11)))*(cos(q(9))*cos(q(16))*cos(q(17)) - cos(q(9))*cos(q(15))*sin(q(17)) - cos(q(16))*cos(q(17))*sin(q(9)) - cos(q(15))*sin(q(9))*sin(q(17)) + cos(q(9))*cos(q(17))*sin(q(15))*sin(q(16)) + cos(q(17))*sin(q(9))*sin(q(15))*sin(q(16)))) / 2, (sin(q(15))*sin(q(17)) + cos(q(15))*cos(q(17))*sin(q(16)))*(r2*w_com3*sin(q(10)) + r2t * w_com2*sin(q(10)) + r3t * w_com3*sin(q(10) - q(11))) - cos(q(9) + pi / 4)*(cos(q(15))*sin(q(17)) - cos(q(17))*sin(q(15))*sin(q(16)))*(r2*w_com3*cos(q(10)) + r2t * w_com2*cos(q(10)) + r3t * w_com3*cos(q(10) - q(11))) - cos(q(16))*cos(q(17))*sin(q(9) + pi / 4)*(r2*w_com3*cos(q(10)) + r2t * w_com2*cos(q(10)) + r3t * w_com3*cos(q(10) - q(11))), r3t*w_com3*cos(q(10) - q(11))*cos(q(9) + pi / 4)*(cos(q(15))*sin(q(17)) - cos(q(17))*sin(q(15))*sin(q(16))) - r3t * w_com3*sin(q(10) - q(11))*(sin(q(15))*sin(q(17)) + cos(q(15))*cos(q(17))*sin(q(16))) + r3t * w_com3*cos(q(10) - q(11))*cos(q(16))*cos(q(17))*sin(q(9) + pi / 4), -(sqrt(2)*(r1*w_com2 + r1 * w_com3 + r2 * w_com3*sin(q(13)) + r2t * w_com2*sin(q(13)) + r3t * w_com3*sin(q(13) - q(14)))*(cos(q(12))*cos(q(16))*cos(q(17)) + cos(q(12))*cos(q(15))*sin(q(17)) + cos(q(16))*cos(q(17))*sin(q(12)) - cos(q(15))*sin(q(12))*sin(q(17)) - cos(q(12))*cos(q(17))*sin(q(15))*sin(q(16)) + cos(q(17))*sin(q(12))*sin(q(15))*sin(q(16)))) / 2, (sin(q(15))*sin(q(17)) + cos(q(15))*cos(q(17))*sin(q(16)))*(r2*w_com3*sin(q(13)) + r2t * w_com2*sin(q(13)) + r3t * w_com3*sin(q(13) - q(14))) - sin(q(12) + pi / 4)*(cos(q(15))*sin(q(17)) - cos(q(17))*sin(q(15))*sin(q(16)))*(r2*w_com3*cos(q(13)) + r2t * w_com2*cos(q(13)) + r3t * w_com3*cos(q(13) - q(14))) + cos(q(16))*cos(q(17))*cos(q(12) + pi / 4)*(r2*w_com3*cos(q(13)) + r2t * w_com2*cos(q(13)) + r3t * w_com3*cos(q(13) - q(14))), r3t*w_com3*cos(q(13) - q(14))*sin(q(12) + pi / 4)*(cos(q(15))*sin(q(17)) - cos(q(17))*sin(q(15))*sin(q(16))) - r3t * w_com3*sin(q(13) - q(14))*(sin(q(15))*sin(q(17)) + cos(q(15))*cos(q(17))*sin(q(16))) - r3t * w_com3*cos(q(13) - q(14))*cos(q(16))*cos(q(17))*cos(q(12) + pi / 4), -(cos(q(15))*sin(q(17)) - cos(q(17))*sin(q(15))*sin(q(16)))*(r2*w_com3*cos(q(4)) + r2 * w_com3*cos(q(7)) + r2 * w_com3*cos(q(10)) + r2 * w_com3*cos(q(13)) + r2t * w_com2*cos(q(4)) + r2t * w_com2*cos(q(7)) + r2t * w_com2*cos(q(10)) + r2t * w_com2*cos(q(13)) + r3t * w_com3*cos(q(4) - q(5)) + r3t * w_com3*cos(q(7) - q(8)) + r3t * w_com3*cos(q(10) - q(11)) + r3t * w_com3*cos(q(13) - q(14))) - (sin(q(15))*sin(q(17)) + cos(q(15))*cos(q(17))*sin(q(16)))*((sqrt(2)*r1*w_com2*cos(q(3))) / 2 + (sqrt(2)*r1*w_com3*cos(q(3))) / 2 + (sqrt(2)*r1*w_com2*cos(q(6))) / 2 + (sqrt(2)*r1*w_com3*cos(q(6))) / 2 - (sqrt(2)*r1*w_com2*cos(q(9))) / 2 - (sqrt(2)*r1*w_com3*cos(q(9))) / 2 - (sqrt(2)*r1*w_com2*cos(q(12))) / 2 - (sqrt(2)*r1*w_com3*cos(q(12))) / 2 + (sqrt(2)*r1*w_com2*sin(q(3))) / 2 + (sqrt(2)*r1*w_com3*sin(q(3))) / 2 - (sqrt(2)*r1*w_com2*sin(q(6))) / 2 - (sqrt(2)*r1*w_com3*sin(q(6))) / 2 + (sqrt(2)*r1*w_com2*sin(q(9))) / 2 + (sqrt(2)*r1*w_com3*sin(q(9))) / 2 - (sqrt(2)*r1*w_com2*sin(q(12))) / 2 - (sqrt(2)*r1*w_com3*sin(q(12))) / 2 + (sqrt(2)*r2*w_com3*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2*w_com3*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2*w_com3*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2*w_com3*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*sin(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(4))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(5))*sin(q(4))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(7))*sin(q(8))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(8))*sin(q(7))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(10))*sin(q(11))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(11))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(13))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(14))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(4))*sin(q(3))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(5))*sin(q(3))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(7))*sin(q(6))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(8))*sin(q(6))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(10))*sin(q(9))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(11))*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(13))*sin(q(12))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(14))*sin(q(12))*sin(q(13))) / 2), cos(q(17))*sin(q(16))*((sqrt(2)*r1*w_com2*cos(q(3))) / 2 + (sqrt(2)*r1*w_com3*cos(q(3))) / 2 - (sqrt(2)*r1*w_com2*cos(q(6))) / 2 - (sqrt(2)*r1*w_com3*cos(q(6))) / 2 + (sqrt(2)*r1*w_com2*cos(q(9))) / 2 + (sqrt(2)*r1*w_com3*cos(q(9))) / 2 - (sqrt(2)*r1*w_com2*cos(q(12))) / 2 - (sqrt(2)*r1*w_com3*cos(q(12))) / 2 - (sqrt(2)*r1*w_com2*sin(q(3))) / 2 - (sqrt(2)*r1*w_com3*sin(q(3))) / 2 - (sqrt(2)*r1*w_com2*sin(q(6))) / 2 - (sqrt(2)*r1*w_com3*sin(q(6))) / 2 + (sqrt(2)*r1*w_com2*sin(q(9))) / 2 + (sqrt(2)*r1*w_com3*sin(q(9))) / 2 + (sqrt(2)*r1*w_com2*sin(q(12))) / 2 + (sqrt(2)*r1*w_com3*sin(q(12))) / 2 + (sqrt(2)*r2*w_com3*cos(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*cos(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(12))*sin(q(13))) / 2 - (sqrt(2)*r2*w_com3*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r2*w_com3*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(4))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(5))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(7))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(8))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(10))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(11))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(13))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(14))*sin(q(13))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(4))*sin(q(3))*sin(q(5))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(5))*sin(q(3))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(7))*sin(q(6))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(8))*sin(q(6))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(10))*sin(q(9))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(11))*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(13))*sin(q(12))*sin(q(14))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(14))*sin(q(12))*sin(q(13))) / 2) - cos(q(16))*cos(q(17))*sin(q(15))*((sqrt(2)*r1*w_com2*cos(q(3))) / 2 + (sqrt(2)*r1*w_com3*cos(q(3))) / 2 + (sqrt(2)*r1*w_com2*cos(q(6))) / 2 + (sqrt(2)*r1*w_com3*cos(q(6))) / 2 - (sqrt(2)*r1*w_com2*cos(q(9))) / 2 - (sqrt(2)*r1*w_com3*cos(q(9))) / 2 - (sqrt(2)*r1*w_com2*cos(q(12))) / 2 - (sqrt(2)*r1*w_com3*cos(q(12))) / 2 + (sqrt(2)*r1*w_com2*sin(q(3))) / 2 + (sqrt(2)*r1*w_com3*sin(q(3))) / 2 - (sqrt(2)*r1*w_com2*sin(q(6))) / 2 - (sqrt(2)*r1*w_com3*sin(q(6))) / 2 + (sqrt(2)*r1*w_com2*sin(q(9))) / 2 + (sqrt(2)*r1*w_com3*sin(q(9))) / 2 - (sqrt(2)*r1*w_com2*sin(q(12))) / 2 - (sqrt(2)*r1*w_com3*sin(q(12))) / 2 + (sqrt(2)*r2*w_com3*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2*w_com3*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2*w_com3*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2*w_com3*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*sin(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(4))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(5))*sin(q(4))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(7))*sin(q(8))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(8))*sin(q(7))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(10))*sin(q(11))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(11))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(13))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(14))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(4))*sin(q(3))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(5))*sin(q(3))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(7))*sin(q(6))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(8))*sin(q(6))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(10))*sin(q(9))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(11))*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(13))*sin(q(12))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(14))*sin(q(12))*sin(q(13))) / 2) - cos(q(15))*cos(q(16))*cos(q(17))*(r2*w_com3*cos(q(4)) + r2 * w_com3*cos(q(7)) + r2 * w_com3*cos(q(10)) + r2 * w_com3*cos(q(13)) + r2t * w_com2*cos(q(4)) + r2t * w_com2*cos(q(7)) + r2t * w_com2*cos(q(10)) + r2t * w_com2*cos(q(13)) + r3t * w_com3*cos(q(4) - q(5)) + r3t * w_com3*cos(q(7) - q(8)) + r3t * w_com3*cos(q(10) - q(11)) + r3t * w_com3*cos(q(13) - q(14))), (cos(q(15))*cos(q(17)) + sin(q(15))*sin(q(16))*sin(q(17)))*((sqrt(2)*r1*w_com2*cos(q(3))) / 2 + (sqrt(2)*r1*w_com3*cos(q(3))) / 2 + (sqrt(2)*r1*w_com2*cos(q(6))) / 2 + (sqrt(2)*r1*w_com3*cos(q(6))) / 2 - (sqrt(2)*r1*w_com2*cos(q(9))) / 2 - (sqrt(2)*r1*w_com3*cos(q(9))) / 2 - (sqrt(2)*r1*w_com2*cos(q(12))) / 2 - (sqrt(2)*r1*w_com3*cos(q(12))) / 2 + (sqrt(2)*r1*w_com2*sin(q(3))) / 2 + (sqrt(2)*r1*w_com3*sin(q(3))) / 2 - (sqrt(2)*r1*w_com2*sin(q(6))) / 2 - (sqrt(2)*r1*w_com3*sin(q(6))) / 2 + (sqrt(2)*r1*w_com2*sin(q(9))) / 2 + (sqrt(2)*r1*w_com3*sin(q(9))) / 2 - (sqrt(2)*r1*w_com2*sin(q(12))) / 2 - (sqrt(2)*r1*w_com3*sin(q(12))) / 2 + (sqrt(2)*r2*w_com3*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2*w_com3*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2*w_com3*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2*w_com3*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*sin(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(4))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(5))*sin(q(4))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(7))*sin(q(8))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(8))*sin(q(7))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(10))*sin(q(11))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(11))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(13))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(14))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(4))*sin(q(3))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(5))*sin(q(3))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(7))*sin(q(6))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(8))*sin(q(6))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(10))*sin(q(9))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(11))*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(13))*sin(q(12))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(14))*sin(q(12))*sin(q(13))) / 2) - (cos(q(17))*sin(q(15)) - cos(q(15))*sin(q(16))*sin(q(17)))*(r2*w_com3*cos(q(4)) + r2 * w_com3*cos(q(7)) + r2 * w_com3*cos(q(10)) + r2 * w_com3*cos(q(13)) + r2t * w_com2*cos(q(4)) + r2t * w_com2*cos(q(7)) + r2t * w_com2*cos(q(10)) + r2t * w_com2*cos(q(13)) + r3t * w_com3*cos(q(4) - q(5)) + r3t * w_com3*cos(q(7) - q(8)) + r3t * w_com3*cos(q(10) - q(11)) + r3t * w_com3*cos(q(13) - q(14))) + cos(q(16))*sin(q(17))*((sqrt(2)*r1*w_com2*cos(q(3))) / 2 + (sqrt(2)*r1*w_com3*cos(q(3))) / 2 - (sqrt(2)*r1*w_com2*cos(q(6))) / 2 - (sqrt(2)*r1*w_com3*cos(q(6))) / 2 + (sqrt(2)*r1*w_com2*cos(q(9))) / 2 + (sqrt(2)*r1*w_com3*cos(q(9))) / 2 - (sqrt(2)*r1*w_com2*cos(q(12))) / 2 - (sqrt(2)*r1*w_com3*cos(q(12))) / 2 - (sqrt(2)*r1*w_com2*sin(q(3))) / 2 - (sqrt(2)*r1*w_com3*sin(q(3))) / 2 - (sqrt(2)*r1*w_com2*sin(q(6))) / 2 - (sqrt(2)*r1*w_com3*sin(q(6))) / 2 + (sqrt(2)*r1*w_com2*sin(q(9))) / 2 + (sqrt(2)*r1*w_com3*sin(q(9))) / 2 + (sqrt(2)*r1*w_com2*sin(q(12))) / 2 + (sqrt(2)*r1*w_com3*sin(q(12))) / 2 + (sqrt(2)*r2*w_com3*cos(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*cos(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(12))*sin(q(13))) / 2 - (sqrt(2)*r2*w_com3*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r2*w_com3*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(4))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(5))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(7))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(8))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(10))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(11))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(13))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(14))*sin(q(13))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(4))*sin(q(3))*sin(q(5))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(5))*sin(q(3))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(7))*sin(q(6))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(8))*sin(q(6))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(10))*sin(q(9))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(11))*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(13))*sin(q(12))*sin(q(14))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(14))*sin(q(12))*sin(q(13))) / 2),
-			        0, w_base + 4 * w_com1 + 4 * w_com2 + 4 * w_com3, 0, (sqrt(2)*(r1*w_com2 + r1 * w_com3 + r2 * w_com3*sin(q(4)) + r2t * w_com2*sin(q(4)) + r3t * w_com3*sin(q(4) - q(5)))*(cos(q(15))*cos(q(17))*sin(q(3)) - cos(q(3))*cos(q(15))*cos(q(17)) + cos(q(3))*cos(q(16))*sin(q(17)) + cos(q(16))*sin(q(3))*sin(q(17)) - cos(q(3))*sin(q(15))*sin(q(16))*sin(q(17)) + sin(q(3))*sin(q(15))*sin(q(16))*sin(q(17)))) / 2, -(cos(q(17))*sin(q(15)) - cos(q(15))*sin(q(16))*sin(q(17)))*(r2*w_com3*sin(q(4)) + r2t * w_com2*sin(q(4)) + r3t * w_com3*sin(q(4) - q(5))) - sin(q(3) + pi / 4)*(cos(q(15))*cos(q(17)) + sin(q(15))*sin(q(16))*sin(q(17)))*(r2*w_com3*cos(q(4)) + r2t * w_com2*cos(q(4)) + r3t * w_com3*cos(q(4) - q(5))) - cos(q(16))*cos(q(3) + pi / 4)*sin(q(17))*(r2*w_com3*cos(q(4)) + r2t * w_com2*cos(q(4)) + r3t * w_com3*cos(q(4) - q(5))), r3t*w_com3*sin(q(4) - q(5))*(cos(q(17))*sin(q(15)) - cos(q(15))*sin(q(16))*sin(q(17))) + r3t * w_com3*cos(q(4) - q(5))*sin(q(3) + pi / 4)*(cos(q(15))*cos(q(17)) + sin(q(15))*sin(q(16))*sin(q(17))) + r3t * w_com3*cos(q(4) - q(5))*cos(q(16))*cos(q(3) + pi / 4)*sin(q(17)), (sqrt(2)*(r1*w_com2 + r1 * w_com3 + r2 * w_com3*sin(q(7)) + r2t * w_com2*sin(q(7)) + r3t * w_com3*sin(q(7) - q(8)))*(cos(q(6))*cos(q(15))*cos(q(17)) + cos(q(15))*cos(q(17))*sin(q(6)) + cos(q(6))*cos(q(16))*sin(q(17)) - cos(q(16))*sin(q(6))*sin(q(17)) + cos(q(6))*sin(q(15))*sin(q(16))*sin(q(17)) + sin(q(6))*sin(q(15))*sin(q(16))*sin(q(17)))) / 2, cos(q(16))*sin(q(17))*sin(q(6) + pi / 4)*(r2*w_com3*cos(q(7)) + r2t * w_com2*cos(q(7)) + r3t * w_com3*cos(q(7) - q(8))) - cos(q(6) + pi / 4)*(cos(q(15))*cos(q(17)) + sin(q(15))*sin(q(16))*sin(q(17)))*(r2*w_com3*cos(q(7)) + r2t * w_com2*cos(q(7)) + r3t * w_com3*cos(q(7) - q(8))) - (cos(q(17))*sin(q(15)) - cos(q(15))*sin(q(16))*sin(q(17)))*(r2*w_com3*sin(q(7)) + r2t * w_com2*sin(q(7)) + r3t * w_com3*sin(q(7) - q(8))), r3t*w_com3*sin(q(7) - q(8))*(cos(q(17))*sin(q(15)) - cos(q(15))*sin(q(16))*sin(q(17))) + r3t * w_com3*cos(q(7) - q(8))*cos(q(6) + pi / 4)*(cos(q(15))*cos(q(17)) + sin(q(15))*sin(q(16))*sin(q(17))) - r3t * w_com3*cos(q(7) - q(8))*cos(q(16))*sin(q(17))*sin(q(6) + pi / 4), -(sqrt(2)*(r1*w_com2 + r1 * w_com3 + r2 * w_com3*sin(q(10)) + r2t * w_com2*sin(q(10)) + r3t * w_com3*sin(q(10) - q(11)))*(cos(q(9))*cos(q(15))*cos(q(17)) + cos(q(15))*cos(q(17))*sin(q(9)) + cos(q(9))*cos(q(16))*sin(q(17)) - cos(q(16))*sin(q(9))*sin(q(17)) + cos(q(9))*sin(q(15))*sin(q(16))*sin(q(17)) + sin(q(9))*sin(q(15))*sin(q(16))*sin(q(17)))) / 2, cos(q(9) + pi / 4)*(cos(q(15))*cos(q(17)) + sin(q(15))*sin(q(16))*sin(q(17)))*(r2*w_com3*cos(q(10)) + r2t * w_com2*cos(q(10)) + r3t * w_com3*cos(q(10) - q(11))) - (cos(q(17))*sin(q(15)) - cos(q(15))*sin(q(16))*sin(q(17)))*(r2*w_com3*sin(q(10)) + r2t * w_com2*sin(q(10)) + r3t * w_com3*sin(q(10) - q(11))) - cos(q(16))*sin(q(17))*sin(q(9) + pi / 4)*(r2*w_com3*cos(q(10)) + r2t * w_com2*cos(q(10)) + r3t * w_com3*cos(q(10) - q(11))), r3t*w_com3*sin(q(10) - q(11))*(cos(q(17))*sin(q(15)) - cos(q(15))*sin(q(16))*sin(q(17))) - r3t * w_com3*cos(q(10) - q(11))*cos(q(9) + pi / 4)*(cos(q(15))*cos(q(17)) + sin(q(15))*sin(q(16))*sin(q(17))) + r3t * w_com3*cos(q(10) - q(11))*cos(q(16))*sin(q(17))*sin(q(9) + pi / 4), -(sqrt(2)*(r1*w_com2 + r1 * w_com3 + r2 * w_com3*sin(q(13)) + r2t * w_com2*sin(q(13)) + r3t * w_com3*sin(q(13) - q(14)))*(cos(q(15))*cos(q(17))*sin(q(12)) - cos(q(12))*cos(q(15))*cos(q(17)) + cos(q(12))*cos(q(16))*sin(q(17)) + cos(q(16))*sin(q(12))*sin(q(17)) - cos(q(12))*sin(q(15))*sin(q(16))*sin(q(17)) + sin(q(12))*sin(q(15))*sin(q(16))*sin(q(17)))) / 2, sin(q(12) + pi / 4)*(cos(q(15))*cos(q(17)) + sin(q(15))*sin(q(16))*sin(q(17)))*(r2*w_com3*cos(q(13)) + r2t * w_com2*cos(q(13)) + r3t * w_com3*cos(q(13) - q(14))) - (cos(q(17))*sin(q(15)) - cos(q(15))*sin(q(16))*sin(q(17)))*(r2*w_com3*sin(q(13)) + r2t * w_com2*sin(q(13)) + r3t * w_com3*sin(q(13) - q(14))) + cos(q(16))*cos(q(12) + pi / 4)*sin(q(17))*(r2*w_com3*cos(q(13)) + r2t * w_com2*cos(q(13)) + r3t * w_com3*cos(q(13) - q(14))), r3t*w_com3*sin(q(13) - q(14))*(cos(q(17))*sin(q(15)) - cos(q(15))*sin(q(16))*sin(q(17))) - r3t * w_com3*cos(q(13) - q(14))*sin(q(12) + pi / 4)*(cos(q(15))*cos(q(17)) + sin(q(15))*sin(q(16))*sin(q(17))) - r3t * w_com3*cos(q(13) - q(14))*cos(q(16))*cos(q(12) + pi / 4)*sin(q(17)), (cos(q(15))*cos(q(17)) + sin(q(15))*sin(q(16))*sin(q(17)))*(r2*w_com3*cos(q(4)) + r2 * w_com3*cos(q(7)) + r2 * w_com3*cos(q(10)) + r2 * w_com3*cos(q(13)) + r2t * w_com2*cos(q(4)) + r2t * w_com2*cos(q(7)) + r2t * w_com2*cos(q(10)) + r2t * w_com2*cos(q(13)) + r3t * w_com3*cos(q(4) - q(5)) + r3t * w_com3*cos(q(7) - q(8)) + r3t * w_com3*cos(q(10) - q(11)) + r3t * w_com3*cos(q(13) - q(14))) + (cos(q(17))*sin(q(15)) - cos(q(15))*sin(q(16))*sin(q(17)))*((sqrt(2)*r1*w_com2*cos(q(3))) / 2 + (sqrt(2)*r1*w_com3*cos(q(3))) / 2 + (sqrt(2)*r1*w_com2*cos(q(6))) / 2 + (sqrt(2)*r1*w_com3*cos(q(6))) / 2 - (sqrt(2)*r1*w_com2*cos(q(9))) / 2 - (sqrt(2)*r1*w_com3*cos(q(9))) / 2 - (sqrt(2)*r1*w_com2*cos(q(12))) / 2 - (sqrt(2)*r1*w_com3*cos(q(12))) / 2 + (sqrt(2)*r1*w_com2*sin(q(3))) / 2 + (sqrt(2)*r1*w_com3*sin(q(3))) / 2 - (sqrt(2)*r1*w_com2*sin(q(6))) / 2 - (sqrt(2)*r1*w_com3*sin(q(6))) / 2 + (sqrt(2)*r1*w_com2*sin(q(9))) / 2 + (sqrt(2)*r1*w_com3*sin(q(9))) / 2 - (sqrt(2)*r1*w_com2*sin(q(12))) / 2 - (sqrt(2)*r1*w_com3*sin(q(12))) / 2 + (sqrt(2)*r2*w_com3*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2*w_com3*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2*w_com3*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2*w_com3*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*sin(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(4))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(5))*sin(q(4))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(7))*sin(q(8))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(8))*sin(q(7))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(10))*sin(q(11))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(11))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(13))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(14))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(4))*sin(q(3))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(5))*sin(q(3))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(7))*sin(q(6))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(8))*sin(q(6))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(10))*sin(q(9))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(11))*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(13))*sin(q(12))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(14))*sin(q(12))*sin(q(13))) / 2), sin(q(16))*sin(q(17))*((sqrt(2)*r1*w_com2*cos(q(3))) / 2 + (sqrt(2)*r1*w_com3*cos(q(3))) / 2 - (sqrt(2)*r1*w_com2*cos(q(6))) / 2 - (sqrt(2)*r1*w_com3*cos(q(6))) / 2 + (sqrt(2)*r1*w_com2*cos(q(9))) / 2 + (sqrt(2)*r1*w_com3*cos(q(9))) / 2 - (sqrt(2)*r1*w_com2*cos(q(12))) / 2 - (sqrt(2)*r1*w_com3*cos(q(12))) / 2 - (sqrt(2)*r1*w_com2*sin(q(3))) / 2 - (sqrt(2)*r1*w_com3*sin(q(3))) / 2 - (sqrt(2)*r1*w_com2*sin(q(6))) / 2 - (sqrt(2)*r1*w_com3*sin(q(6))) / 2 + (sqrt(2)*r1*w_com2*sin(q(9))) / 2 + (sqrt(2)*r1*w_com3*sin(q(9))) / 2 + (sqrt(2)*r1*w_com2*sin(q(12))) / 2 + (sqrt(2)*r1*w_com3*sin(q(12))) / 2 + (sqrt(2)*r2*w_com3*cos(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*cos(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(12))*sin(q(13))) / 2 - (sqrt(2)*r2*w_com3*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r2*w_com3*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(4))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(5))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(7))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(8))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(10))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(11))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(13))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(14))*sin(q(13))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(4))*sin(q(3))*sin(q(5))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(5))*sin(q(3))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(7))*sin(q(6))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(8))*sin(q(6))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(10))*sin(q(9))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(11))*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(13))*sin(q(12))*sin(q(14))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(14))*sin(q(12))*sin(q(13))) / 2) - cos(q(16))*sin(q(15))*sin(q(17))*((sqrt(2)*r1*w_com2*cos(q(3))) / 2 + (sqrt(2)*r1*w_com3*cos(q(3))) / 2 + (sqrt(2)*r1*w_com2*cos(q(6))) / 2 + (sqrt(2)*r1*w_com3*cos(q(6))) / 2 - (sqrt(2)*r1*w_com2*cos(q(9))) / 2 - (sqrt(2)*r1*w_com3*cos(q(9))) / 2 - (sqrt(2)*r1*w_com2*cos(q(12))) / 2 - (sqrt(2)*r1*w_com3*cos(q(12))) / 2 + (sqrt(2)*r1*w_com2*sin(q(3))) / 2 + (sqrt(2)*r1*w_com3*sin(q(3))) / 2 - (sqrt(2)*r1*w_com2*sin(q(6))) / 2 - (sqrt(2)*r1*w_com3*sin(q(6))) / 2 + (sqrt(2)*r1*w_com2*sin(q(9))) / 2 + (sqrt(2)*r1*w_com3*sin(q(9))) / 2 - (sqrt(2)*r1*w_com2*sin(q(12))) / 2 - (sqrt(2)*r1*w_com3*sin(q(12))) / 2 + (sqrt(2)*r2*w_com3*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2*w_com3*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2*w_com3*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2*w_com3*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*sin(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(4))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(5))*sin(q(4))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(7))*sin(q(8))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(8))*sin(q(7))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(10))*sin(q(11))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(11))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(13))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(14))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(4))*sin(q(3))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(5))*sin(q(3))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(7))*sin(q(6))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(8))*sin(q(6))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(10))*sin(q(9))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(11))*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(13))*sin(q(12))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(14))*sin(q(12))*sin(q(13))) / 2) - cos(q(15))*cos(q(16))*sin(q(17))*(r2*w_com3*cos(q(4)) + r2 * w_com3*cos(q(7)) + r2 * w_com3*cos(q(10)) + r2 * w_com3*cos(q(13)) + r2t * w_com2*cos(q(4)) + r2t * w_com2*cos(q(7)) + r2t * w_com2*cos(q(10)) + r2t * w_com2*cos(q(13)) + r3t * w_com3*cos(q(4) - q(5)) + r3t * w_com3*cos(q(7) - q(8)) + r3t * w_com3*cos(q(10) - q(11)) + r3t * w_com3*cos(q(13) - q(14))), (cos(q(15))*sin(q(17)) - cos(q(17))*sin(q(15))*sin(q(16)))*((sqrt(2)*r1*w_com2*cos(q(3))) / 2 + (sqrt(2)*r1*w_com3*cos(q(3))) / 2 + (sqrt(2)*r1*w_com2*cos(q(6))) / 2 + (sqrt(2)*r1*w_com3*cos(q(6))) / 2 - (sqrt(2)*r1*w_com2*cos(q(9))) / 2 - (sqrt(2)*r1*w_com3*cos(q(9))) / 2 - (sqrt(2)*r1*w_com2*cos(q(12))) / 2 - (sqrt(2)*r1*w_com3*cos(q(12))) / 2 + (sqrt(2)*r1*w_com2*sin(q(3))) / 2 + (sqrt(2)*r1*w_com3*sin(q(3))) / 2 - (sqrt(2)*r1*w_com2*sin(q(6))) / 2 - (sqrt(2)*r1*w_com3*sin(q(6))) / 2 + (sqrt(2)*r1*w_com2*sin(q(9))) / 2 + (sqrt(2)*r1*w_com3*sin(q(9))) / 2 - (sqrt(2)*r1*w_com2*sin(q(12))) / 2 - (sqrt(2)*r1*w_com3*sin(q(12))) / 2 + (sqrt(2)*r2*w_com3*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2*w_com3*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2*w_com3*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2*w_com3*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*sin(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(4))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(5))*sin(q(4))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(7))*sin(q(8))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(8))*sin(q(7))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(10))*sin(q(11))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(11))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(13))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(14))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(4))*sin(q(3))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(5))*sin(q(3))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(7))*sin(q(6))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(8))*sin(q(6))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(10))*sin(q(9))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(11))*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(13))*sin(q(12))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(14))*sin(q(12))*sin(q(13))) / 2) - (sin(q(15))*sin(q(17)) + cos(q(15))*cos(q(17))*sin(q(16)))*(r2*w_com3*cos(q(4)) + r2 * w_com3*cos(q(7)) + r2 * w_com3*cos(q(10)) + r2 * w_com3*cos(q(13)) + r2t * w_com2*cos(q(4)) + r2t * w_com2*cos(q(7)) + r2t * w_com2*cos(q(10)) + r2t * w_com2*cos(q(13)) + r3t * w_com3*cos(q(4) - q(5)) + r3t * w_com3*cos(q(7) - q(8)) + r3t * w_com3*cos(q(10) - q(11)) + r3t * w_com3*cos(q(13) - q(14))) - cos(q(16))*cos(q(17))*((sqrt(2)*r1*w_com2*cos(q(3))) / 2 + (sqrt(2)*r1*w_com3*cos(q(3))) / 2 - (sqrt(2)*r1*w_com2*cos(q(6))) / 2 - (sqrt(2)*r1*w_com3*cos(q(6))) / 2 + (sqrt(2)*r1*w_com2*cos(q(9))) / 2 + (sqrt(2)*r1*w_com3*cos(q(9))) / 2 - (sqrt(2)*r1*w_com2*cos(q(12))) / 2 - (sqrt(2)*r1*w_com3*cos(q(12))) / 2 - (sqrt(2)*r1*w_com2*sin(q(3))) / 2 - (sqrt(2)*r1*w_com3*sin(q(3))) / 2 - (sqrt(2)*r1*w_com2*sin(q(6))) / 2 - (sqrt(2)*r1*w_com3*sin(q(6))) / 2 + (sqrt(2)*r1*w_com2*sin(q(9))) / 2 + (sqrt(2)*r1*w_com3*sin(q(9))) / 2 + (sqrt(2)*r1*w_com2*sin(q(12))) / 2 + (sqrt(2)*r1*w_com3*sin(q(12))) / 2 + (sqrt(2)*r2*w_com3*cos(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*cos(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(12))*sin(q(13))) / 2 - (sqrt(2)*r2*w_com3*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r2*w_com3*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(4))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(5))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(7))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(8))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(10))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(11))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(13))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(14))*sin(q(13))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(4))*sin(q(3))*sin(q(5))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(5))*sin(q(3))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(7))*sin(q(6))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(8))*sin(q(6))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(10))*sin(q(9))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(11))*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(13))*sin(q(12))*sin(q(14))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(14))*sin(q(12))*sin(q(13))) / 2),
-				    0, 0, w_base + 4 * w_com1 + 4 * w_com2 + 4 * w_com3, -(sqrt(2)*(cos(q(3))*sin(q(16)) + sin(q(3))*sin(q(16)) + cos(q(3))*cos(q(16))*sin(q(15)) - cos(q(16))*sin(q(3))*sin(q(15)))*(r1*w_com2 + r1 * w_com3 + r2 * w_com3*sin(q(4)) + r2t * w_com2*sin(q(4)) + r3t * w_com3*sin(q(4) - q(5)))) / 2, cos(q(3) + pi / 4)*sin(q(16))*(r2*w_com3*cos(q(4)) + r2t * w_com2*cos(q(4)) + r3t * w_com3*cos(q(4) - q(5))) + cos(q(15))*cos(q(16))*(r2*w_com3*sin(q(4)) + r2t * w_com2*sin(q(4)) + r3t * w_com3*sin(q(4) - q(5))) - cos(q(16))*sin(q(15))*sin(q(3) + pi / 4)*(r2*w_com3*cos(q(4)) + r2t * w_com2*cos(q(4)) + r3t * w_com3*cos(q(4) - q(5))), r3t*w_com3*cos(q(4) - q(5))*cos(q(16))*sin(q(15))*sin(q(3) + pi / 4) - r3t * w_com3*cos(q(4) - q(5))*cos(q(3) + pi / 4)*sin(q(16)) - r3t * w_com3*sin(q(4) - q(5))*cos(q(15))*cos(q(16)), (sqrt(2)*(sin(q(6))*sin(q(16)) - cos(q(6))*sin(q(16)) + cos(q(6))*cos(q(16))*sin(q(15)) + cos(q(16))*sin(q(6))*sin(q(15)))*(r1*w_com2 + r1 * w_com3 + r2 * w_com3*sin(q(7)) + r2t * w_com2*sin(q(7)) + r3t * w_com3*sin(q(7) - q(8)))) / 2, cos(q(15))*cos(q(16))*(r2*w_com3*sin(q(7)) + r2t * w_com2*sin(q(7)) + r3t * w_com3*sin(q(7) - q(8))) - sin(q(16))*sin(q(6) + pi / 4)*(r2*w_com3*cos(q(7)) + r2t * w_com2*cos(q(7)) + r3t * w_com3*cos(q(7) - q(8))) - cos(q(16))*cos(q(6) + pi / 4)*sin(q(15))*(r2*w_com3*cos(q(7)) + r2t * w_com2*cos(q(7)) + r3t * w_com3*cos(q(7) - q(8))), r3t*w_com3*cos(q(7) - q(8))*sin(q(16))*sin(q(6) + pi / 4) - r3t * w_com3*sin(q(7) - q(8))*cos(q(15))*cos(q(16)) + r3t * w_com3*cos(q(7) - q(8))*cos(q(16))*cos(q(6) + pi / 4)*sin(q(15)), -(sqrt(2)*(sin(q(9))*sin(q(16)) - cos(q(9))*sin(q(16)) + cos(q(9))*cos(q(16))*sin(q(15)) + cos(q(16))*sin(q(9))*sin(q(15)))*(r1*w_com2 + r1 * w_com3 + r2 * w_com3*sin(q(10)) + r2t * w_com2*sin(q(10)) + r3t * w_com3*sin(q(10) - q(11)))) / 2, sin(q(16))*sin(q(9) + pi / 4)*(r2*w_com3*cos(q(10)) + r2t * w_com2*cos(q(10)) + r3t * w_com3*cos(q(10) - q(11))) + cos(q(15))*cos(q(16))*(r2*w_com3*sin(q(10)) + r2t * w_com2*sin(q(10)) + r3t * w_com3*sin(q(10) - q(11))) + cos(q(16))*cos(q(9) + pi / 4)*sin(q(15))*(r2*w_com3*cos(q(10)) + r2t * w_com2*cos(q(10)) + r3t * w_com3*cos(q(10) - q(11))), -r3t * w_com3*sin(q(10) - q(11))*cos(q(15))*cos(q(16)) - r3t * w_com3*cos(q(10) - q(11))*sin(q(16))*sin(q(9) + pi / 4) - r3t * w_com3*cos(q(10) - q(11))*cos(q(16))*cos(q(9) + pi / 4)*sin(q(15)), (sqrt(2)*(cos(q(12))*sin(q(16)) + sin(q(12))*sin(q(16)) + cos(q(12))*cos(q(16))*sin(q(15)) - cos(q(16))*sin(q(12))*sin(q(15)))*(r1*w_com2 + r1 * w_com3 + r2 * w_com3*sin(q(13)) + r2t * w_com2*sin(q(13)) + r3t * w_com3*sin(q(13) - q(14)))) / 2, cos(q(15))*cos(q(16))*(r2*w_com3*sin(q(13)) + r2t * w_com2*sin(q(13)) + r3t * w_com3*sin(q(13) - q(14))) - cos(q(12) + pi / 4)*sin(q(16))*(r2*w_com3*cos(q(13)) + r2t * w_com2*cos(q(13)) + r3t * w_com3*cos(q(13) - q(14))) + cos(q(16))*sin(q(15))*sin(q(12) + pi / 4)*(r2*w_com3*cos(q(13)) + r2t * w_com2*cos(q(13)) + r3t * w_com3*cos(q(13) - q(14))), r3t*w_com3*cos(q(13) - q(14))*cos(q(12) + pi / 4)*sin(q(16)) - r3t * w_com3*sin(q(13) - q(14))*cos(q(15))*cos(q(16)) - r3t * w_com3*cos(q(13) - q(14))*cos(q(16))*sin(q(15))*sin(q(12) + pi / 4), cos(q(16))*sin(q(15))*(r2*w_com3*cos(q(4)) + r2 * w_com3*cos(q(7)) + r2 * w_com3*cos(q(10)) + r2 * w_com3*cos(q(13)) + r2t * w_com2*cos(q(4)) + r2t * w_com2*cos(q(7)) + r2t * w_com2*cos(q(10)) + r2t * w_com2*cos(q(13)) + r3t * w_com3*cos(q(4) - q(5)) + r3t * w_com3*cos(q(7) - q(8)) + r3t * w_com3*cos(q(10) - q(11)) + r3t * w_com3*cos(q(13) - q(14))) - cos(q(15))*cos(q(16))*((sqrt(2)*r1*w_com2*cos(q(3))) / 2 + (sqrt(2)*r1*w_com3*cos(q(3))) / 2 + (sqrt(2)*r1*w_com2*cos(q(6))) / 2 + (sqrt(2)*r1*w_com3*cos(q(6))) / 2 - (sqrt(2)*r1*w_com2*cos(q(9))) / 2 - (sqrt(2)*r1*w_com3*cos(q(9))) / 2 - (sqrt(2)*r1*w_com2*cos(q(12))) / 2 - (sqrt(2)*r1*w_com3*cos(q(12))) / 2 + (sqrt(2)*r1*w_com2*sin(q(3))) / 2 + (sqrt(2)*r1*w_com3*sin(q(3))) / 2 - (sqrt(2)*r1*w_com2*sin(q(6))) / 2 - (sqrt(2)*r1*w_com3*sin(q(6))) / 2 + (sqrt(2)*r1*w_com2*sin(q(9))) / 2 + (sqrt(2)*r1*w_com3*sin(q(9))) / 2 - (sqrt(2)*r1*w_com2*sin(q(12))) / 2 - (sqrt(2)*r1*w_com3*sin(q(12))) / 2 + (sqrt(2)*r2*w_com3*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2*w_com3*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2*w_com3*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2*w_com3*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*sin(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(4))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(5))*sin(q(4))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(7))*sin(q(8))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(8))*sin(q(7))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(10))*sin(q(11))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(11))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(13))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(14))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(4))*sin(q(3))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(5))*sin(q(3))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(7))*sin(q(6))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(8))*sin(q(6))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(10))*sin(q(9))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(11))*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(13))*sin(q(12))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(14))*sin(q(12))*sin(q(13))) / 2), cos(q(16))*((sqrt(2)*r1*w_com2*cos(q(3))) / 2 + (sqrt(2)*r1*w_com3*cos(q(3))) / 2 - (sqrt(2)*r1*w_com2*cos(q(6))) / 2 - (sqrt(2)*r1*w_com3*cos(q(6))) / 2 + (sqrt(2)*r1*w_com2*cos(q(9))) / 2 + (sqrt(2)*r1*w_com3*cos(q(9))) / 2 - (sqrt(2)*r1*w_com2*cos(q(12))) / 2 - (sqrt(2)*r1*w_com3*cos(q(12))) / 2 - (sqrt(2)*r1*w_com2*sin(q(3))) / 2 - (sqrt(2)*r1*w_com3*sin(q(3))) / 2 - (sqrt(2)*r1*w_com2*sin(q(6))) / 2 - (sqrt(2)*r1*w_com3*sin(q(6))) / 2 + (sqrt(2)*r1*w_com2*sin(q(9))) / 2 + (sqrt(2)*r1*w_com3*sin(q(9))) / 2 + (sqrt(2)*r1*w_com2*sin(q(12))) / 2 + (sqrt(2)*r1*w_com3*sin(q(12))) / 2 + (sqrt(2)*r2*w_com3*cos(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*cos(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(12))*sin(q(13))) / 2 - (sqrt(2)*r2*w_com3*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r2*w_com3*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(4))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(5))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(7))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(8))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(10))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(11))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(13))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(14))*sin(q(13))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(4))*sin(q(3))*sin(q(5))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(5))*sin(q(3))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(7))*sin(q(6))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(8))*sin(q(6))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(10))*sin(q(9))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(11))*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(13))*sin(q(12))*sin(q(14))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(14))*sin(q(12))*sin(q(13))) / 2) + sin(q(15))*sin(q(16))*((sqrt(2)*r1*w_com2*cos(q(3))) / 2 + (sqrt(2)*r1*w_com3*cos(q(3))) / 2 + (sqrt(2)*r1*w_com2*cos(q(6))) / 2 + (sqrt(2)*r1*w_com3*cos(q(6))) / 2 - (sqrt(2)*r1*w_com2*cos(q(9))) / 2 - (sqrt(2)*r1*w_com3*cos(q(9))) / 2 - (sqrt(2)*r1*w_com2*cos(q(12))) / 2 - (sqrt(2)*r1*w_com3*cos(q(12))) / 2 + (sqrt(2)*r1*w_com2*sin(q(3))) / 2 + (sqrt(2)*r1*w_com3*sin(q(3))) / 2 - (sqrt(2)*r1*w_com2*sin(q(6))) / 2 - (sqrt(2)*r1*w_com3*sin(q(6))) / 2 + (sqrt(2)*r1*w_com2*sin(q(9))) / 2 + (sqrt(2)*r1*w_com3*sin(q(9))) / 2 - (sqrt(2)*r1*w_com2*sin(q(12))) / 2 - (sqrt(2)*r1*w_com3*sin(q(12))) / 2 + (sqrt(2)*r2*w_com3*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2*w_com3*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2*w_com3*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(3))*sin(q(4))) / 2 + (sqrt(2)*r2t*w_com2*cos(q(6))*sin(q(7))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*cos(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2*w_com3*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2*w_com3*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2*w_com3*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2*w_com3*sin(q(12))*sin(q(13))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(3))*sin(q(4))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(6))*sin(q(7))) / 2 + (sqrt(2)*r2t*w_com2*sin(q(9))*sin(q(10))) / 2 - (sqrt(2)*r2t*w_com2*sin(q(12))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(4))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(3))*cos(q(5))*sin(q(4))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(7))*sin(q(8))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(6))*cos(q(8))*sin(q(7))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(10))*sin(q(11))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(9))*cos(q(11))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(13))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(12))*cos(q(14))*sin(q(13))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(4))*sin(q(3))*sin(q(5))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(5))*sin(q(3))*sin(q(4))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(7))*sin(q(6))*sin(q(8))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(8))*sin(q(6))*sin(q(7))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(10))*sin(q(9))*sin(q(11))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(11))*sin(q(9))*sin(q(10))) / 2 + (sqrt(2)*r3t*w_com3*cos(q(13))*sin(q(12))*sin(q(14))) / 2 - (sqrt(2)*r3t*w_com3*cos(q(14))*sin(q(12))*sin(q(13))) / 2) + cos(q(15))*sin(q(16))*(r2*w_com3*cos(q(4)) + r2 * w_com3*cos(q(7)) + r2 * w_com3*cos(q(10)) + r2 * w_com3*cos(q(13)) + r2t * w_com2*cos(q(4)) + r2t * w_com2*cos(q(7)) + r2t * w_com2*cos(q(10)) + r2t * w_com2*cos(q(13)) + r3t * w_com3*cos(q(4) - q(5)) + r3t * w_com3*cos(q(7) - q(8)) + r3t * w_com3*cos(q(10) - q(11)) + r3t * w_com3*cos(q(13) - q(14))), 0;
+		// Homegeneous Transformation Matrix after increment
+		com_pos(pos_dq, dq);
+
+		// Finite difference
+		com_jacobian(0, i) = (pos_dq(0) - current_pos(0)) / delta;
+		com_jacobian(1, i) = (pos_dq(1) - current_pos(1)) / delta;
+		com_jacobian(2, i) = (pos_dq(2) - current_pos(2)) / delta;
+	}
 }
 
 
@@ -574,9 +586,9 @@ void full_kinematics(VectorXd& pos, const Vector3d& q, const Vector3d& posb, con
 	q2rot(rotm, rotb(0), rotb(1), rotb(2));
 
 	trans << rotm(0, 0), rotm(0, 1), rotm(0, 2), posb(0),
-		rotm(1, 0), rotm(1, 1), rotm(1, 2), posb(1),
-		rotm(2, 0), rotm(2, 1), rotm(2, 2), posb(2),
-		0, 0, 0, 1;
+		     rotm(1, 0), rotm(1, 1), rotm(1, 2), posb(1),
+		     rotm(2, 0), rotm(2, 1), rotm(2, 2), posb(2),
+		     0, 0, 0, 1;
 
 	// Position of the legs with respect to the base
 	if (leg == 1) {
@@ -603,6 +615,46 @@ void full_kinematics(VectorXd& pos, const Vector3d& q, const Vector3d& posb, con
 		leg_str(0, 3), leg_str(1, 3), leg_str(2, 3),
 		leg_mid(0, 3), leg_mid(1, 3), leg_mid(2, 3),
 		leg_end(0, 3), leg_end(1, 3), leg_end(2, 3);
+}
+
+
+void walking(MatrixXd& com_jacobian, const VectorXd& q, const Vector3d& current_pos, const Legs& Leg) {
+	MatrixXd leg1, leg2, leg3, leg4, cog1, cog2;
+	
+	// Ingresamos el paso
+	double x_dist, y_dist, steps;
+	cout << endl << "Ingrese el desplazamiento en x:" << endl;
+	cin >> x_dist;
+	cout << endl << "Ingrese el desplazamiento en y:" << endl;
+	cin >> y_dist;
+	cout << endl << "Ingrese la secuencia:" << endl;
+	cin >> steps;
+
+	VectorXd desired_pos(10);
+
+	// Increment leg1 position
+	desired_pos(0) = Leg.leg1(0) + x_dist;
+	desired_pos(1) = Leg.leg1(1) + y_dist;
+
+	// Update center of gravity
+	desired_pos(8) = Leg.com(0) + x_dist / 2;
+	desired_pos(9) = Leg.com(1) + y_dist / 2;
+		
+	// Increment leg2 position
+	desired_pos(2) = Leg.leg2(0) + x_dist;
+	desired_pos(3) = Leg.leg2(1) + y_dist;
+
+	// Increment leg4 position
+	desired_pos(6) = Leg.leg4(0) + x_dist;
+	desired_pos(7) = Leg.leg4(1) + y_dist;
+
+	// Update center of gravity
+	desired_pos(8) = Leg.com(0) + x_dist / 2;
+	desired_pos(9) = Leg.com(1) + y_dist / 2;
+
+	// Increment leg3 position
+	desired_pos(4) = Leg.leg3(0) + x_dist;
+	desired_pos(5) = Leg.leg3(1) + y_dist;
 }
 
 
