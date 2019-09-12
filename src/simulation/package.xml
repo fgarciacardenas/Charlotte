@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>simulation</name>
+  <version>0.0.0</version>
+  <description>Paquete para la simulacion</description>
+
+  <maintainer email="facundo.garcia@todo.todo">facundo.garcia</maintainer>
+  <license>TODO</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>rospy</build_depend>
+  <build_export_depend>rospy</build_export_depend>
+  <exec_depend>rospy</exec_depend>
+</package>

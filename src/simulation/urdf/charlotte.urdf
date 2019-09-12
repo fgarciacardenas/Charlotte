@@ -1,0 +1,597 @@
+<?xml version="1.0"?>
+
+<robot name="charlotte">
+
+  <!-- Color of materials -->
+
+  <material name="yellow">
+    <color rgba="1 1 0 1"/>
+  </material>
+  <material name="blue">
+    <color rgba="0 0 1 1"/>
+  </material>
+  <material name="red">
+    <color rgba="1 0 0 1"/>
+  </material>
+  <material name="white">
+    <color rgba="1 1 1 1"/>
+  </material>
+   <material name="grey">
+    <color rgba="0.4 0.4 0.4 1"/>
+  </material>
+
+  <!-- The base is declared -->
+
+  <link name="base">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Base.stl" scale="0.001 0.001 0.001"/>
+        <!-- <box size="0.145 0.145 0.05"/> -->
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0.228"/>
+      <material name="white" />
+    </visual>
+  </link>
+
+  <!-- Base fixed joints are assigned -->
+
+  <joint name="base_leg1" type="fixed">
+    <parent link="base"/>
+    <child link="leg1_c1"/>
+    <origin xyz="0.093 -0.093 0.225"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <joint name="base_leg2" type="fixed">
+    <parent link="base"/>
+    <child link="leg2_c1"/>
+    <origin xyz="0.093 0.093 0.225"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <joint name="base_leg3" type="fixed">
+    <parent link="base"/>
+    <child link="leg3_c1"/>
+    <origin xyz="-0.093 -0.093 0.225"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <joint name="base_leg4" type="fixed">
+    <parent link="base"/>
+    <child link="leg4_c1"/>
+    <origin xyz="-0.093 0.093 0.225"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <!-- Base cylinders are created -->
+
+  <link name="leg1_c1">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Motor1.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.08" radius="0.02"/> -->
+      </geometry>
+      <origin xyz="0 0 0" rpy="0 0 -0.785398"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+  <link name="leg2_c1">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Motor1.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.08" radius="0.02"/> -->
+      </geometry>
+      <origin xyz="0 0 0" rpy="0 0 0.785398"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+  <link name="leg3_c1">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Motor1.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.08" radius="0.02"/> -->
+      </geometry>
+      <origin xyz="0 0 0" rpy="0 0 -2.356102"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+  <link name="leg4_c1">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Motor1.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.08" radius="0.02"/> -->
+      </geometry>
+      <origin xyz="0 0 0" rpy="0 0 2.356102"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+  <!-- Motor 1 are assigned -->
+
+  <joint name="leg1_motor1" type="revolute">
+    <parent link="leg1_c1"/>
+    <child link="leg1_bar1"/>
+    <origin xyz="0 0 0" rpy="0 0 -2.35619"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="0" upper="3.1416"/>
+  </joint>
+
+  <joint name="leg2_motor1" type="revolute">
+    <parent link="leg2_c1"/>
+    <child link="leg2_bar1"/>
+    <origin xyz="0 0 0" rpy="0 0 -0.785398"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="0" upper="3.1416"/>
+  </joint>
+
+  <joint name="leg3_motor1" type="revolute">
+    <parent link="leg3_c1"/>
+    <child link="leg3_bar1"/>
+    <origin xyz="0 0 0" rpy="0 0 2.35619"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="0" upper="3.1416"/>
+  </joint>
+
+  <joint name="leg4_motor1" type="revolute">
+    <parent link="leg4_c1"/>
+    <child link="leg4_bar1"/>
+    <origin xyz="0 0 0" rpy="0 0 0.785398"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="0" upper="3.1416"/>
+  </joint>
+
+  <!-- First bars are assigned -->
+
+  <link name="leg1_bar1">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Vara1.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.055" radius="0.01"/> -->
+      </geometry>
+      <origin rpy="0 1.57 0" xyz="0.0275 0 0"/>
+      <material name="white" />
+    </visual>
+  </link>
+
+  <link name="leg2_bar1">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Vara1.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.055" radius="0.01"/> -->
+      </geometry>
+      <origin rpy="0 1.57 0" xyz="0.0275 0 0"/>
+      <material name="white" />
+    </visual>
+  </link>
+
+  <link name="leg3_bar1">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Vara1.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.055" radius="0.01"/> -->
+      </geometry>
+      <origin rpy="0 1.57 0" xyz="0.0275 0 0"/>
+      <material name="white" />
+    </visual>
+  </link>
+
+  <link name="leg4_bar1">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Vara1.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.055" radius="0.01"/> -->
+      </geometry>
+      <origin rpy="0 1.57 0" xyz="0.0275 0 0"/>
+      <material name="white" />
+    </visual>
+  </link>
+
+  <!-- First bars fixed joints are assigned -->
+
+  <joint name="leg1_bar1_fix" type="fixed">
+    <parent link="leg1_bar1"/>
+    <child link="leg1_c2"/>
+    <origin xyz="0.055 0 0"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <joint name="leg2_bar1_fix" type="fixed">
+    <parent link="leg2_bar1"/>
+    <child link="leg2_c2"/>
+    <origin xyz="0.055 0 0"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <joint name="leg3_bar1_fix" type="fixed">
+    <parent link="leg3_bar1"/>
+    <child link="leg3_c2"/>
+    <origin xyz="0.055 0 0"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <joint name="leg4_bar1_fix" type="fixed">
+    <parent link="leg4_bar1"/>
+    <child link="leg4_c2"/>
+    <origin xyz="0.055 0 0"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+
+  <!-- Second motor cylinders are created -->
+
+  <link name="leg1_c2">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Motor2.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.08" radius="0.02"/> -->
+      </geometry>
+      <origin rpy="1.57 0 0" xyz="0 0 0"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+  <link name="leg2_c2">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Motor2.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.08" radius="0.02"/> -->
+      </geometry>
+      <origin rpy="1.57 0 0" xyz="0 0 0"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+  <link name="leg3_c2">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Motor2.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.08" radius="0.02"/> -->
+      </geometry>
+      <origin rpy="1.57 0 0" xyz="0 0 0"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+  <link name="leg4_c2">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Motor2.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.08" radius="0.02"/> -->
+      </geometry>
+      <origin rpy="1.57 0 0" xyz="0 0 0"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+  <!-- Motor 2 are assigned -->
+
+  <joint name="leg1_motor2" type="revolute">
+    <parent link="leg1_c2"/>
+    <child link="leg1_bar2"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 -1 0" />
+    <limit effort="300" velocity="0.1" lower="0" upper="3.1416"/>
+  </joint>
+
+  <joint name="leg2_motor2" type="revolute">
+    <parent link="leg2_c2"/>
+    <child link="leg2_bar2"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 -1 0" />
+    <limit effort="300" velocity="0.1" lower="0" upper="3.1416"/>
+  </joint>
+
+  <joint name="leg3_motor2" type="revolute">
+    <parent link="leg3_c2"/>
+    <child link="leg3_bar2"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 -1 0" />
+    <limit effort="300" velocity="0.1" lower="0" upper="3.1416"/>
+  </joint>
+
+  <joint name="leg4_motor2" type="revolute">
+    <parent link="leg4_c2"/>
+    <child link="leg4_bar2"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="0 -1 0" />
+    <limit effort="300" velocity="0.1" lower="0" upper="3.1416"/>
+  </joint>
+
+  <!-- Second bars are assigned -->
+
+  <link name="leg1_bar2">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Vara2.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.075" radius="0.01"/> -->
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 -0.0375"/>
+      <material name="white" />
+    </visual>
+  </link>
+
+  <link name="leg2_bar2">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Vara2.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.075" radius="0.01"/> -->
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 -0.0375"/>
+      <material name="white" />
+    </visual>
+  </link>
+
+  <link name="leg3_bar2">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Vara2.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.075" radius="0.01"/> -->
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 -0.0375"/>
+      <material name="white" />
+    </visual>
+  </link>
+
+  <link name="leg4_bar2">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Vara2.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.075" radius="0.01"/> -->
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 -0.0375"/>
+      <material name="white" />
+    </visual>
+  </link>
+
+  <!-- Second bars fixed joints are assigned -->
+
+  <joint name="leg1_bar2_fix" type="fixed">
+    <parent link="leg1_bar2"/>
+    <child link="leg1_c3"/>
+    <origin xyz="0 0 -0.075"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <joint name="leg2_bar2_fix" type="fixed">
+    <parent link="leg2_bar2"/>
+    <child link="leg2_c3"/>
+    <origin xyz="0 0 -0.075"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <joint name="leg3_bar2_fix" type="fixed">
+    <parent link="leg3_bar2"/>
+    <child link="leg3_c3"/>
+    <origin xyz="0 0 -0.075"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <joint name="leg4_bar2_fix" type="fixed">
+    <parent link="leg4_bar2"/>
+    <child link="leg4_c3"/>
+    <origin xyz="0 0 -0.075"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <!-- Motor 3 cylinders are assigned -->
+
+  <link name="leg1_c3">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Motor3.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.08" radius="0.02"/> -->
+      </geometry>
+      <origin rpy="1.57 0 0" xyz="0 0 0"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+  <link name="leg2_c3">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Motor3.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.08" radius="0.02"/> -->
+      </geometry>
+      <origin rpy="1.57 0 0" xyz="0 0 0"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+  <link name="leg3_c3">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Motor3.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.08" radius="0.02"/> -->
+      </geometry>
+      <origin rpy="1.57 0 0" xyz="0 0 0"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+  <link name="leg4_c3">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Motor3.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.08" radius="0.02"/> -->
+      </geometry>
+      <origin rpy="1.57 0 0" xyz="0 0 0"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+  <!-- Motor 3 are assigned -->
+
+  <joint name="leg1_motor3" type="revolute">
+    <parent link="leg1_c3"/>
+    <child link="leg1_bar3"/>
+    <origin xyz="0 0 0"/>
+    <axis xyz="0 1 0" />
+    <limit effort="300" velocity="0.1" lower="0" upper="3.1416"/>
+  </joint>
+
+  <joint name="leg2_motor3" type="revolute">
+    <parent link="leg2_c3"/>
+    <child link="leg2_bar3"/>
+    <origin xyz="0 0 0"/>
+    <axis xyz="0 1 0" />
+    <limit effort="300" velocity="0.1" lower="0" upper="3.1416"/>
+  </joint>
+
+  <joint name="leg3_motor3" type="revolute">
+    <parent link="leg3_c3"/>
+    <child link="leg3_bar3"/>
+    <origin xyz="0 0 0"/>
+    <axis xyz="0 1 0" />
+    <limit effort="300" velocity="0.1" lower="0" upper="3.1416"/>
+  </joint>
+
+  <joint name="leg4_motor3" type="revolute">
+    <parent link="leg4_c3"/>
+    <child link="leg4_bar3"/>
+    <origin xyz="0 0 0"/>
+    <axis xyz="0 1 0" />
+    <limit effort="300" velocity="0.1" lower="0" upper="3.1416"/>
+  </joint>
+
+  <!-- Third bars are assigned -->
+
+  <link name="leg1_bar3">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Leg.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.225" radius="0.01"/> -->
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="white" />
+    </visual>
+  </link>
+
+  <link name="leg2_bar3">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Leg.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.225" radius="0.01"/> -->
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="white" />
+    </visual>
+  </link>
+
+  <link name="leg3_bar3">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Leg.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.225" radius="0.01"/> -->
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="white" />
+    </visual>
+  </link>
+
+  <link name="leg4_bar3">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Leg.stl" scale="0.001 0.001 0.001"/>
+        <!-- <cylinder length="0.225" radius="0.01"/> -->
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="white" />
+    </visual>
+  </link>
+
+  <!-- Third bars fixes are assigned -->
+
+  <joint name="leg1_bar3_fix" type="fixed">
+    <parent link="leg1_bar3"/>
+    <child link="leg1_end"/>
+    <origin xyz="0 0 -0.216284"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <joint name="leg2_bar3_fix" type="fixed">
+    <parent link="leg2_bar3"/>
+    <child link="leg2_end"/>
+    <origin xyz="0 0 -0.216284"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <joint name="leg3_bar3_fix" type="fixed">
+    <parent link="leg3_bar3"/>
+    <child link="leg3_end"/>
+    <origin xyz="0 0 -0.216284"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <joint name="leg4_bar3_fix" type="fixed">
+    <parent link="leg4_bar3"/>
+    <child link="leg4_end"/>
+    <origin xyz="0 0 -0.216284"/>
+    <axis xyz="0 0 1" />
+    <limit effort="300" velocity="0.1" lower="-1.57" upper="1.57"/>
+  </joint>
+
+  <!-- End effectors are assigned -->
+
+  <link name="leg1_end">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Foot.stl" scale="0.001 0.001 0.001"/>
+        <!-- <sphere radius="0.02"/> -->
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+  <link name="leg2_end">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Foot.stl" scale="0.001 0.001 0.001"/>
+        <!-- <sphere radius="0.02"/> -->
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+  <link name="leg3_end">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Foot.stl" scale="0.001 0.001 0.001"/>
+        <!-- <sphere radius="0.02"/> -->
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+  <link name="leg4_end">
+    <visual>
+      <geometry>
+        <mesh filename="package://simulation/meshes/Foot.stl" scale="0.001 0.001 0.001"/>
+        <!-- <sphere radius="0.02"/> -->
+      </geometry>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <material name="grey" />
+    </visual>
+  </link>
+
+</robot>
